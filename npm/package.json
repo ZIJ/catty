@@ -1,6 +1,6 @@
 {
-  "name": "catty-cli",
-  "version": "0.1.0",
+  "name": "@izalutski/catty",
+  "version": "0.1.2",
   "description": "Run AI agents remotely on Fly.io with local terminal feel",
   "keywords": [
     "ai",
@@ -14,7 +14,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/izalutski/catty"
+    "url": "git+https://github.com/ZIJ/catty.git"
   },
   "bin": {
     "catty": "./bin/catty"
@@ -23,7 +23,6 @@
     "postinstall": "node scripts/install.js"
   },
   "files": [
-    "bin",
     "scripts"
   ],
   "engines": {

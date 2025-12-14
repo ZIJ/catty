@@ -85,10 +85,16 @@ async function install() {
       fs.mkdirSync(binDir, { recursive: true });
     }
 
-    // Check if binary already exists
+    // Check if binary already exists and is actually a binary (not placeholder)
     if (fs.existsSync(binaryPath)) {
-      console.log('catty binary already installed');
-      return;
+      const stats = fs.statSync(binaryPath);
+      // Placeholder is ~300 bytes, real binary is much larger
+      if (stats.size > 1000) {
+        console.log('catty binary already installed');
+        return;
+      }
+      // Remove placeholder
+      fs.unlinkSync(binaryPath);
     }
 
     const url = getDownloadUrl(os, cpu);
