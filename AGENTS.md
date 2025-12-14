@@ -1,196 +1,263 @@
-# Fly TUI Streaming v1.0 (Go) — Dev-first local control plane
+# Catty - Remote Agent Streaming
 
-Runs claude code (and potentially other agents eg codex) remotely on the server in isolated fly machines, streaming PTY to the user so that it feels to them that they are working with a local agent.
+Runs Claude Code (and potentially other agents like Codex) remotely on Fly.io machines, streaming PTY to the user so it feels like working with a local agent.
 
-## 1) Scope and milestones
+## Project Status
 
-### Milestone 0 (build this first)
+**Milestone 0: COMPLETE**
 
-**Goal:** You can run `tui` locally, spin up an isolated Fly Machine per session, and attach to it with “local-terminal feel”.
-
-* ✅ Executor runtime **deployed on Fly** (a Fly app that hosts per-session Machines).
-* ✅ API server runs **locally** (localhost) and calls **Fly Machines API** over the public endpoint.
-* ✅ CLI runs **locally** and connects **directly** to the executor over WebSocket (not via API).
-* ✅ No user auth / accounts / OAuth / etc.
-* ✅ Still use a **per-session capability token** (random secret) to prevent arbitrary internet connections.
-
-### Milestone 1 (later)
-
-Deploy the API server to Fly:
-
-* Switch Machines API base URL to Fly’s **internal** endpoint when running on Fly.
-* Still no user auth required.
-
-### Milestone 2 (later)
-
-Add real auth + multi-tenancy:
-
-* User identity, quotas, billing, orgs, etc.
-* Replace capability token with signed JWTs (or keep JWTs but add user claims).
+The following is implemented and working:
+- `catty` CLI for starting and managing sessions
+- `catty-api` local API server that creates Fly machines
+- `catty-exec-runtime` executor that runs inside Fly machines
+- Claude Code integration with automatic API key approval
+- WebSocket-based PTY streaming with local terminal feel
 
 ---
 
-## 2) Recommended stack (all Go)
+## Quick Start
 
-### Why this stack
+### Prerequisites
 
-You want:
+1. Fly.io account with `FLY_API_TOKEN` set
+2. `ANTHROPIC_API_KEY` for Claude Code
+3. The `catty-exec` Fly app deployed (see Deployment section)
 
-* small binaries,
-* fast iteration,
-* “infra-friendly” reliability,
-* and libraries that are widely adopted.
+### Running
 
-### CLI (`tui`)
+Terminal 1 - Start the API server:
+```bash
+export FLY_API_TOKEN=...
+export ANTHROPIC_API_KEY=...
+./bin/catty-api
+```
 
-* **Go** + `spf13/cobra` for commands/subcommands (de-facto in Go CLIs). ([GitHub][1])
-* `golang.org/x/term` for raw terminal mode (`MakeRaw` / `Restore`). ([Go Packages][2])
-* WebSocket client: `github.com/coder/websocket` (current maintained home of the nhooyr websocket lib; minimal/idiomatic). ([GitHub][3])
+Terminal 2 - Start a new session:
+```bash
+./bin/catty new                    # Default: Claude Code
+./bin/catty new --agent codex      # Or use Codex
+```
 
-### Local API server (`tui-api`)
+### Other Commands
 
-* **Go** + `net/http` + `go-chi/chi` router (lightweight, idiomatic). ([GitHub][4])
-  Keep it boring: JSON in/out, a handful of endpoints.
-* Calls Fly Machines API using `net/http` client.
-
-### Executor runtime (`tui-exec-runtime`) (runs inside each Fly Machine)
-
-* **Go** + `net/http`
-* PTY: `github.com/creack/pty` (standard Go PTY lib). ([GitHub][6])
-* WebSocket server: `github.com/coder/websocket` ([GitHub][3])
+```bash
+./bin/catty list                                    # List active sessions
+./bin/catty stop <session-id>                       # Stop a session
+./bin/catty stop-all-sessions-dangerously --yes-i-mean-it  # Stop all sessions
+```
 
 ---
 
-## 3) Architecture (Milestone 0)
+## Architecture
 
 ### Components
 
-1. **Local API server** (`tui-api`, runs on `http://127.0.0.1:4815`)
+```
+┌─────────────┐     ┌─────────────┐     ┌──────────────────────┐
+│   catty     │────▶│  catty-api  │────▶│  Fly Machines API    │
+│   (CLI)     │     │ (localhost) │     │                      │
+└──────┬──────┘     └─────────────┘     └──────────────────────┘
+       │
+       │ WebSocket (direct)
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│                     Fly Machine                              │
+│  ┌─────────────────────┐    ┌─────────────────────────────┐  │
+│  │ catty-exec-runtime  │───▶│  claude-wrapper + claude    │  │
+│  │    (WS server)      │    │       (PTY process)         │  │
+│  └─────────────────────┘    └─────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+```
 
-   * Creates per-session Fly Machines via the Machines API.
-   * Returns `machine_id`, `connect_url`, `connect_token`.
-   * Stores session records locally (file-based).
+### Data Flow
 
-2. **Local CLI** (`tui`)
-
-   * Calls local API server.
-   * Connects directly to executor over WebSocket.
-   * Streams terminal bytes bidirectionally.
-
-3. **Fly executor app** (`tui-exec` Fly app)
-
-   * Hosts many executor Machines (one per session).
-   * Each Machine runs `tui-exec-runtime`, which spawns the agent CLI in a PTY.
-
----
-
-## 4) Fly integration details you must follow
-
-### 4.1 Machines API base URL differs local vs on-Fly
-
-Fly documents two base URLs for the Machines API:
-
-* **Internal**: `http://_api.internal:4280` (only from within Fly’s private network)
-* **Public**: `https://api.machines.dev` (from outside Fly)
-
-**Milestone 0 uses the public base URL** (local dev machine is outside Fly):
-`FLY_MACHINES_API_BASE=https://api.machines.dev`
-
-**Milestone 1 (API deployed on Fly) uses internal**:
-`FLY_MACHINES_API_BASE=http://_api.internal:4280`
-
-### 4.2 Directly routing the CLI to the correct Machine
-
-Your CLI must force the request to land on the right executor Machine via:
-
-`fly-force-instance-id: <machine_id>`
-
-This is the simplest approach for a **CLI** client (browsers can’t set WS headers, but that’s not your MVP). Fly’s docs explicitly define `fly-force-instance-id` and its behavior (no fallback if unavailable).
-
-### 4.3 Listing sessions without a DB (metadata filters)
-
-Fly Machines list endpoint supports `metadata.{key}=value` filtering. ([Fly][7])
-
-In Milestone 0 you can keep local state, but **you should still tag machines with metadata** so Milestone 1 is easy.
-
-Example:
-
-* `metadata.project=tui`
-* `metadata.session=<uuid>`
-* `metadata.owner=<local-username>` (placeholder until auth exists)
-
-### 4.4 One-time Fly networking requirement (shared IPv4)
-
-If you create apps with **public services in Machine config** via Machines API, Fly says you need to allocate a shared IPv4: `fly ips allocate-v4 --shared`. ([Fly][8])
+1. `catty new` calls local API (`POST /v1/sessions`)
+2. API creates Fly Machine with connect token and command
+3. API returns connection details to CLI
+4. CLI connects directly to machine via WebSocket with:
+   - `fly-force-instance-id: <machine_id>` header
+   - `Authorization: Bearer <connect_token>` header
+5. Executor validates token, spawns PTY, relays bytes bidirectionally
+6. CLI enters raw terminal mode, streams stdin/stdout
 
 ---
 
-## 5) Session model and lifecycle
+## Project Structure
 
-### Session identifier
-
-* `session_id` (client-facing) = generated UUID (Milestone 0)
-* `machine_id` (Fly identifier) returned by Machines API
-
-Store a local mapping: `session_id -> machine_id -> connect_token -> created_at`.
-
-### Lifecycle
-
-1. CLI calls local API: `POST /v1/sessions`
-2. Local API creates Fly Machine:
-
-   * uses Machines API: create Machine, define services, env, metadata
-   * waits for ready using Machines API wait endpoint (recommended in docs) ([Fly][7])
-3. Local API returns connect info.
-4. CLI dials: `wss://tui-exec.fly.dev/connect` with:
-
-   * header `fly-force-instance-id: <machine_id>`
-   * header `authorization: bearer <connect_token>`
-5. Executor runtime validates token, spawns agent in PTY, starts streaming.
-6. On exit:
-
-   * runtime sends exit status
-   * CLI restores terminal state
-7. Stop/delete:
-
-   * CLI calls local API → local API stops/deletes the Fly machine
-
----
-
-## 6) Capability token (NOT “auth”, but required even in Milestone 0)
-
-Even without user auth, you **must** prevent randoms on the internet from attaching.
-
-### How it works
-
-* Local API generates a random `connect_token` per session (32+ bytes, base64url).
-* API injects it into the Machine env as `CONNECT_TOKEN`.
-* CLI sends it as `Authorization: Bearer <connect_token>`.
-* Executor runtime checks `CONNECT_TOKEN == incoming token`.
-
-This is intentionally simple and local-dev friendly.
-
-**Later** you can swap this to JWTs without changing the wire shape.
+```
+catty/
+├── cmd/
+│   ├── catty/                  # CLI binary
+│   │   ├── main.go
+│   │   ├── new.go              # 'new' command - start session
+│   │   ├── list.go             # 'list' command - list sessions
+│   │   ├── stop.go             # 'stop' command - stop session
+│   │   └── stopall.go          # 'stop-all-sessions-dangerously'
+│   ├── catty-api/              # Local API server binary
+│   │   └── main.go
+│   └── catty-exec-runtime/     # Executor (runs in Fly Machine)
+│       └── main.go
+├── internal/
+│   ├── api/                    # API server logic
+│   │   ├── server.go
+│   │   └── handlers.go
+│   ├── cli/                    # CLI logic
+│   │   ├── run.go              # Session connection logic
+│   │   └── terminal.go         # Raw terminal handling
+│   ├── executor/               # Executor runtime logic
+│   │   ├── server.go           # HTTP/WS server
+│   │   ├── pty.go              # PTY management
+│   │   └── relay.go            # WebSocket relay
+│   ├── fly/                    # Fly Machines API client
+│   │   ├── client.go
+│   │   └── machines.go
+│   └── protocol/               # Shared types
+│       └── messages.go         # WS message types
+├── scripts/
+│   └── claude-wrapper.sh       # Pre-approves API key before launching claude
+├── Dockerfile                  # For catty-exec-runtime
+├── fly.toml                    # Fly app config
+├── go.mod
+└── AGENTS.md                   # This file
+```
 
 ---
 
-## 7) Interfaces
+## Configuration
 
-## 7.1 Local API (`tui-api`) endpoints (Milestone 0)
+### Environment Variables
 
-Base: `http://127.0.0.1:4815`
+**catty-api (local):**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FLY_API_TOKEN` | Fly.io API token | Required |
+| `FLY_MACHINES_API_BASE` | Machines API URL | `https://api.machines.dev` |
+| `CATTY_EXEC_APP` | Fly app name for executor | `catty-exec` |
+| `CATTY_API_ADDR` | API listen address | `127.0.0.1:4815` |
+| `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required for Claude |
+
+**catty-exec-runtime (in Fly Machine):**
+| Variable | Description |
+|----------|-------------|
+| `CONNECT_TOKEN` | Session capability token (set by API) |
+| `CATTY_CMD` | Command to run in PTY (set by API) |
+| `ANTHROPIC_API_KEY` | For Claude Code (set by API) |
+| `CATTY_DEBUG` | Set to `1` for debug logging |
+
+---
+
+## Claude Code Integration
+
+### How it Works
+
+Claude Code requires several first-run prompts to be handled:
+1. Theme selection (light/dark)
+2. Login method selection
+3. Directory trust confirmation
+4. API key approval
+
+We handle these by pre-configuring `~/.claude.json` in the Docker image and using a wrapper script.
+
+### Pre-configured Settings (Dockerfile)
+
+```dockerfile
+# Pre-populate claude.json to skip onboarding prompts
+RUN echo '{"numStartups":1,"installMethod":"npm","autoUpdates":false,"hasCompletedOnboarding":true,"lastOnboardingVersion":"1.0.0","projects":{"/":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true}}}' > /root/.claude.json
+```
+
+This sets:
+- `hasCompletedOnboarding: true` - Skips onboarding wizard
+- `projects["/"].hasTrustDialogAccepted: true` - Pre-trusts root directory
+- `numStartups > 0` - Signals this isn't a fresh install
+
+### API Key Auto-Approval (claude-wrapper.sh)
+
+The wrapper script runs before claude and pre-approves the API key:
+
+```bash
+#!/bin/sh
+# Extract last 20 chars of API key (the suffix Claude uses for tracking)
+KEY_SUFFIX=$(echo "$ANTHROPIC_API_KEY" | tail -c 21)
+
+# Add to approved list in claude.json using jq
+jq --arg suffix "$KEY_SUFFIX" \
+  '.customApiKeyResponses.approved = (.customApiKeyResponses.approved // []) + [$suffix] | .customApiKeyResponses.approved |= unique' \
+  /root/.claude.json > /tmp/claude.json && mv /tmp/claude.json /root/.claude.json
+
+exec /usr/local/bin/claude "$@"
+```
+
+This adds the API key suffix to `customApiKeyResponses.approved`, which Claude Code checks to skip the "Do you want to use this API key?" prompt.
+
+---
+
+## Deployment
+
+### Initial Setup (One-time)
+
+```bash
+# Create the Fly app
+fly apps create catty-exec
+
+# Allocate shared IPv4 (required for public services via Machines API)
+fly ips allocate-v4 --shared -a catty-exec
+
+# Deploy the executor image
+fly deploy --app catty-exec
+```
+
+### Updating the Executor
+
+```bash
+fly deploy --app catty-exec
+```
+
+### Getting Current Image
+
+The API automatically fetches the current deployed image from existing machines. It looks for machines with `fly_process_group: app` metadata (set by `fly deploy`).
+
+---
+
+## WebSocket Protocol
+
+### Binary Frames
+- **Client → Server**: Raw stdin bytes
+- **Server → Client**: Raw PTY output bytes
+
+### Text Frames (JSON Control Messages)
+
+**Client → Server:**
+```json
+{"type":"resize","cols":120,"rows":40}
+{"type":"signal","name":"SIGINT"}
+{"type":"ping"}
+```
+
+**Server → Client:**
+```json
+{"type":"ready"}
+{"type":"exit","code":0,"signal":null}
+{"type":"pong"}
+{"type":"error","message":"..."}
+```
+
+### Keepalive
+Ping/pong every 25 seconds to prevent idle disconnects.
+
+---
+
+## API Endpoints
 
 ### `POST /v1/sessions`
 
-Creates a new Fly executor Machine.
+Create a new session.
 
 Request:
-
 ```json
 {
-  "agent": "claude_code|codex|amp|custom",
-  "cmd": ["claude", "code"],
-  "region": "iad|sjc|ams|auto",
+  "agent": "claude",
+  "cmd": ["claude-wrapper"],
+  "region": "iad",
   "cpus": 1,
   "memory_mb": 1024,
   "ttl_sec": 7200
@@ -198,141 +265,89 @@ Request:
 ```
 
 Response:
-
 ```json
 {
   "session_id": "uuid",
-  "machine_id": "01J…",
-  "connect_url": "wss://tui-exec.fly.dev/connect",
+  "machine_id": "...",
+  "connect_url": "wss://catty-exec.fly.dev/connect",
   "connect_token": "base64url",
   "headers": {
-    "fly-force-instance-id": "01J…"
+    "fly-force-instance-id": "..."
   }
 }
 ```
 
 ### `GET /v1/sessions`
+List sessions from local storage.
 
-Lists local-known sessions (from local file).
+### `GET /v1/sessions/{id}`
+Get session details.
 
-### `GET /v1/sessions/{session_id}`
+### `POST /v1/sessions/{id}/stop`
+Stop and delete a session's machine.
 
-Shows session mapping and (optional) live machine state (by querying Machines API).
-
-### `POST /v1/sessions/{session_id}/stop`
-
-Stops (and optionally deletes) the machine.
-
----
-
-## 7.2 Executor runtime (`tui-exec-runtime`) API
-
-### `GET /healthz`
-
-Always `200 OK` once process booted.
-
-### `GET /connect` (WebSocket)
-
-* Validates `Authorization: Bearer <token>`
-* Spawns PTY if first attach
-* Streams bytes bidirectionally
+### `POST /v1/sessions/stop-all`
+Stop all machines in the app (dangerous).
 
 ---
 
-## 8) Data plane protocol (WebSocket)
+## Logging
 
-Keep it dead simple for v1:
+Uses `log/slog` for structured logging.
 
-### WS binary frames
+- **Info level**: Default, shows key events
+- **Debug level**: Enable with `CATTY_DEBUG=1`, shows detailed operation info
 
-* **Client → Server**: raw stdin bytes
-* **Server → Client**: raw PTY output bytes
-
-### WS text frames (JSON control)
-
-Client → Server:
-
-* `{"type":"resize","cols":120,"rows":40}`
-* `{"type":"signal","name":"SIGINT"}`
-* `{"type":"ping"}`
-
-Server → Client:
-
-* `{"type":"ready"}`
-* `{"type":"exit","code":0,"signal":null}`
-* `{"type":"pong"}`
-* `{"type":"error","message":"…"}`
-
-### Keepalive
-
-Send ping every ~25s when idle (either direction) to avoid idle connection drops.
+Example output:
+```
+time=... level=INFO msg="executor starting" command="[claude-wrapper]"
+time=... level=INFO msg="client connected, starting relay"
+time=... level=DEBUG msg="creating PTY" command=claude-wrapper anthropic_key_present=true
+```
 
 ---
 
-## 9) Local dev experience (minimal)
+## Troubleshooting
 
-### One-time: deploy the executor app on Fly
+### "manifest unknown" error when creating session
+The Fly image tag changed after deployment. The API fetches the current image from existing `fly deploy` machines. Make sure at least one machine from `fly deploy` exists.
 
-1. Create Fly app `tui-exec`
-2. Allocate shared IPv4 (needed for public services created via Machines API): ([Fly][8])
+### Claude Code shows login prompt
+The `~/.claude.json` pre-configuration may be missing. Check that:
+1. `hasCompletedOnboarding: true` is set
+2. `projects["/"].hasTrustDialogAccepted: true` is set
 
-   * `fly ips allocate-v4 --shared -a tui-exec`
-3. Deploy an initial placeholder Machine or just ensure app exists (your API will create Machines dynamically).
+### Claude Code shows API key prompt
+The wrapper script should pre-approve the key. Check that:
+1. `jq` is installed in the image
+2. `ANTHROPIC_API_KEY` is passed to the machine
+3. The wrapper is being used (`claude-wrapper` not `claude`)
 
-### Run locally (Milestone 0)
-
-In one terminal:
-
-* `FLY_API_TOKEN=…`
-* `FLY_MACHINES_API_BASE=https://api.machines.dev`
-* `TUI_EXEC_APP=tui-exec`
-* `tui-api` (binds to `127.0.0.1:4815`)
-
-In another terminal:
-
-* `tui run --agent claude_code -- claude code`
+### Connection drops after ~60s idle
+Keepalive ping/pong should prevent this. Check that ping messages are being sent every 25 seconds.
 
 ---
 
-## 10) What changes when you deploy the API to Fly (Milestone 1)
+## Future Milestones
 
-* Change Machines API base URL to internal: `http://_api.internal:4280`
-* Stop using local session file as the “source of truth”
+### Milestone 1: Deploy API to Fly
+- Switch Machines API to internal endpoint: `http://_api.internal:4280`
+- Use machine metadata for session storage instead of local file
 
-  * Instead: list Machines using `metadata.{key}` filters. ([Fly][7])
-* Everything else stays the same:
-
-  * CLI still connects directly to executor with `fly-force-instance-id`.
-
----
-
-## 11) Deliverables for Milestone 0 (hand to an agent)
-
-### Repo structure
-
-* `cmd/tui` — CLI
-* `cmd/tui-api` — local API server
-* `cmd/tui-exec-runtime` — executor runtime binary (containerized)
-
-### Required features
-
-* API: create/wait/stop/delete machine via Machines API (public endpoint) ([Fly][7])
-* Executor: PTY spawn + WS relay (`creack/pty`) ([GitHub][6])
-* CLI: raw mode + WS relay + force routing header ([Go Packages][2])
-* Capability token check (simple env match)
+### Milestone 2: Multi-tenancy
+- Add user authentication
+- Add quotas and billing
+- Replace capability tokens with signed JWTs
 
 ---
 
-If you want, I can also give you:
+## Dependencies
 
-* a **concrete Machines API “create machine” JSON payload template** (services + env + metadata),
-* and a **very small Go skeleton** (3 main packages) that your agent can expand.
-
-[1]: https://github.com/spf13/cobra?utm_source=chatgpt.com "spf13/cobra: A Commander for modern Go CLI interactions"
-[2]: https://pkg.go.dev/golang.org/x/term?utm_source=chatgpt.com "term package - golang.org/x/term - ..."
-[3]: https://github.com/coder/websocket?utm_source=chatgpt.com "Minimal and idiomatic WebSocket library for Go"
-[4]: https://github.com/go-chi/chi?utm_source=chatgpt.com "go-chi/chi: lightweight, idiomatic and composable router for ..."
-[5]: https://github.com/danielgtaylor/huma?utm_source=chatgpt.com "danielgtaylor/huma: Huma REST/HTTP API Framework for ..."
-[6]: https://github.com/creack/pty?utm_source=chatgpt.com "creack/pty: PTY interface for Go"
-[7]: https://fly.io/docs/machines/api/machines-resource/ "Machines · Fly Docs"
-[8]: https://fly.io/docs/networking/services/?utm_source=chatgpt.com "Public Network Services · Fly Docs"
+```
+github.com/spf13/cobra v1.8.1          # CLI framework
+github.com/go-chi/chi/v5 v5.1.0        # HTTP router
+github.com/coder/websocket v1.8.12     # WebSocket
+github.com/creack/pty v1.1.21          # PTY handling
+golang.org/x/term v0.25.0              # Terminal raw mode
+github.com/google/uuid v1.6.0          # UUID generation
+```

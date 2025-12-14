@@ -1,53 +1,30 @@
-#!/usr/bin/expect -f
-# Wrapper script for Claude Code that auto-selects options during first run.
-# Handles TUI-rendered prompts by matching partial text patterns.
+#!/bin/sh
+# Wrapper script for Claude Code that pre-approves API key before launching.
 
-# Remove ANSI escape codes from matching
-remove_nulls -d 0
+CLAUDE_JSON="/root/.claude.json"
 
-set timeout 3
+# If ANTHROPIC_API_KEY is set, pre-approve it in claude.json
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+    # Extract last 20 characters of the API key (the suffix Claude uses for approval)
+    KEY_SUFFIX=$(echo "$ANTHROPIC_API_KEY" | tail -c 21)
 
-# Spawn claude with all passed arguments
-spawn /usr/local/bin/claude {*}$argv
+    # Check if jq is available, otherwise use sed
+    if command -v jq >/dev/null 2>&1; then
+        # Use jq to add the key suffix to approved list
+        TMP_FILE=$(mktemp)
+        jq --arg suffix "$KEY_SUFFIX" '.customApiKeyResponses.approved = (.customApiKeyResponses.approved // []) + [$suffix] | .customApiKeyResponses.approved |= unique' "$CLAUDE_JSON" > "$TMP_FILE" && mv "$TMP_FILE" "$CLAUDE_JSON"
+    else
+        # Fallback: create the structure manually if file is simple
+        if grep -q '"customApiKeyResponses"' "$CLAUDE_JSON" 2>/dev/null; then
+            # Already has the key, try to add to it with sed (basic)
+            sed -i "s/\"approved\":\s*\[\]/\"approved\":[\"$KEY_SUFFIX\"]/" "$CLAUDE_JSON"
+        else
+            # Add the whole block - read current content and rebuild
+            CURRENT=$(cat "$CLAUDE_JSON" | tr -d '\n' | sed 's/}$//')
+            echo "${CURRENT},\"customApiKeyResponses\":{\"approved\":[\"$KEY_SUFFIX\"],\"rejected\":[]}}" > "$CLAUDE_JSON"
+        fi
+    fi
+fi
 
-# Handle various first-run prompts
-# TUI frameworks render text with escape codes, so we match key phrases
-expect {
-    -re "light.*dark" {
-        # Theme selection - press Enter for default or send number
-        send "\r"
-        exp_continue
-    }
-    -re "login method" {
-        # Login method - select option 2 (API key)
-        send "2\r"
-        exp_continue
-    }
-    -re "trust the files" {
-        # Trust folder prompt - press Enter for Yes (default)
-        send "\r"
-        exp_continue
-    }
-    -re "use this API key" {
-        # Custom API key detected - select Yes (option 1)
-        # TUI uses arrow keys for selection, up arrow moves to "Yes", then Enter
-        send "\033\[A\r"
-        exp_continue
-    }
-    -re "Yes, proceed" {
-        # Another form of trust prompt - press Enter
-        send "\r"
-        exp_continue
-    }
-    timeout {
-        # No more prompts detected, hand over to user
-    }
-    eof {
-        # Process ended
-        wait
-        exit
-    }
-}
-
-# Hand control to the user for interactive session
-interact
+# Execute claude with all arguments
+exec /usr/local/bin/claude "$@"

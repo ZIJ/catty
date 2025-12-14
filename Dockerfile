@@ -24,7 +24,7 @@ RUN npm install -g @anthropic-ai/claude-code
 FROM node:22-alpine
 
 # Install runtime dependencies
-RUN apk add --no-cache ca-certificates git
+RUN apk add --no-cache ca-certificates git jq
 
 # Copy claude from builder (npm global bin location)
 COPY --from=claude-builder /usr/local/bin/claude /usr/local/bin/claude
@@ -39,10 +39,7 @@ RUN mkdir -p /root/.claude/projects /root/.claude/todos /root/.claude/statsig
 # - customApiKeyResponses.approved: empty array, will be populated at runtime via wrapper
 RUN echo '{"numStartups":1,"installMethod":"npm","autoUpdates":false,"hasCompletedOnboarding":true,"lastOnboardingVersion":"1.0.0","projects":{"/":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true}}}' > /root/.claude.json
 
-# Install expect for automating interactive prompts
-RUN apk add --no-cache expect
-
-# Create wrapper script that auto-selects API key auth (option 2) on first run
+# Wrapper script that pre-approves API key before launching claude
 COPY scripts/claude-wrapper.sh /usr/local/bin/claude-wrapper
 RUN chmod +x /usr/local/bin/claude-wrapper
 
