@@ -2,7 +2,7 @@ package executor
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -32,6 +32,8 @@ func NewServer() *Server {
 	} else {
 		cmd = []string{"/bin/sh"}
 	}
+
+	slog.Info("executor starting", "command", cmd)
 
 	return &Server{
 		connectToken: token,
@@ -66,7 +68,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		CompressionMode: websocket.CompressionDisabled,
 	})
 	if err != nil {
-		log.Printf("websocket accept error: %v", err)
+		slog.Error("websocket accept failed", "error", err)
 		return
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
@@ -74,15 +76,17 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// Get or create PTY
 	pty, err := s.getOrCreatePTY()
 	if err != nil {
-		log.Printf("pty error: %v", err)
+		slog.Error("pty creation failed", "error", err)
 		conn.Close(websocket.StatusInternalError, "failed to create pty")
 		return
 	}
 
+	slog.Info("client connected, starting relay")
+
 	// Run relay
 	relay := NewRelay(conn, pty)
 	if err := relay.Run(context.Background()); err != nil {
-		log.Printf("relay error: %v", err)
+		slog.Error("relay error", "error", err)
 	}
 }
 
@@ -116,8 +120,11 @@ func (s *Server) getOrCreatePTY() (*PTY, error) {
 		return s.pty, nil
 	}
 
+	slog.Debug("creating PTY", "command", s.cmd)
+
 	pty := NewPTY(s.cmd[0], s.cmd[1:]...)
 	if err := pty.Start(); err != nil {
+		slog.Error("PTY start failed", "error", err)
 		return nil, err
 	}
 

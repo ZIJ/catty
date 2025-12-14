@@ -2,6 +2,7 @@ package executor
 
 import (
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -23,8 +24,19 @@ type PTY struct {
 
 // NewPTY creates a new PTY manager.
 func NewPTY(name string, args ...string) *PTY {
+	// Try to find the executable
+	path, err := exec.LookPath(name)
+	if err != nil {
+		slog.Error("executable not found", "name", name, "error", err, "PATH", os.Getenv("PATH"))
+	} else {
+		slog.Debug("found executable", "name", name, "path", path)
+		name = path // Use full path
+	}
+
 	cmd := exec.Command(name, args...)
 	cmd.Env = os.Environ()
+
+	slog.Debug("creating PTY", "command", name, "args", args, "anthropic_key_present", os.Getenv("ANTHROPIC_API_KEY") != "")
 
 	return &PTY{
 		cmd:    cmd,

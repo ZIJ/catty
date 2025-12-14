@@ -47,15 +47,16 @@ type CreateMachineRequest struct {
 
 // Machine represents a Fly machine.
 type Machine struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	State      string         `json:"state"`
-	Region     string         `json:"region"`
-	InstanceID string         `json:"instance_id"`
-	PrivateIP  string         `json:"private_ip"`
-	Config     *MachineConfig `json:"config"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	State        string         `json:"state"`
+	Region       string         `json:"region"`
+	InstanceID   string         `json:"instance_id"`
+	PrivateIP    string         `json:"private_ip"`
+	Config       *MachineConfig `json:"config"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	ProcessGroup string         `json:"process_group"`
 }
 
 // CreateMachine creates a new machine in the app.
@@ -192,13 +193,22 @@ func (c *Client) ListMachines(metadata map[string]string) ([]*Machine, error) {
 }
 
 // GetCurrentImage returns the image reference from an existing machine in the app.
-// This is useful to get the current deployed image tag.
+// Prefers machines from the "app" process group (created by fly deploy).
 func (c *Client) GetCurrentImage() (string, error) {
 	machines, err := c.ListMachines(nil)
 	if err != nil {
 		return "", err
 	}
 
+	// First, try to find a machine from "app" process group (fly deploy machines)
+	// The process group is stored in metadata.fly_process_group
+	for _, m := range machines {
+		if m.Config != nil && m.Config.Metadata["fly_process_group"] == "app" && m.Config.Image != "" {
+			return m.Config.Image, nil
+		}
+	}
+
+	// Fallback to any machine with an image
 	for _, m := range machines {
 		if m.Config != nil && m.Config.Image != "" {
 			return m.Config.Image, nil

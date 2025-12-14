@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"sync"
 	"syscall"
 	"time"
@@ -120,7 +120,7 @@ func (r *Relay) relayWSToPTY(ctx context.Context) error {
 		case websocket.MessageText:
 			// Control message
 			if err := r.handleControl(data); err != nil {
-				log.Printf("control message error: %v", err)
+				slog.Warn("control message error", "error", err)
 			}
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/user"
 	"time"
 
@@ -50,9 +51,8 @@ type ErrorResponse struct {
 
 // Handlers contains HTTP handlers for the API.
 type Handlers struct {
-	flyClient    *fly.Client
-	store        *SessionStore
-	cachedImage  string
+	flyClient *fly.Client
+	store     *SessionStore
 }
 
 // NewHandlers creates new API handlers.
@@ -64,18 +64,9 @@ func NewHandlers(flyClient *fly.Client, store *SessionStore) *Handlers {
 }
 
 // getImage returns the executor image to use for new machines.
+// Fetches fresh each time to pick up new deployments.
 func (h *Handlers) getImage() (string, error) {
-	if h.cachedImage != "" {
-		return h.cachedImage, nil
-	}
-
-	image, err := h.flyClient.GetCurrentImage()
-	if err != nil {
-		return "", err
-	}
-
-	h.cachedImage = image
-	return image, nil
+	return h.flyClient.GetCurrentImage()
 }
 
 // CreateSession handles POST /v1/sessions.
@@ -122,15 +113,23 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build environment for the machine
+	machineEnv := map[string]string{
+		"CONNECT_TOKEN": connectToken,
+		"CATTY_CMD":     joinCmd(req.Cmd),
+	}
+
+	// Pass through ANTHROPIC_API_KEY if available
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		machineEnv["ANTHROPIC_API_KEY"] = apiKey
+	}
+
 	// Build machine config
 	machineReq := &fly.CreateMachineRequest{
 		Region: req.Region,
 		Config: &fly.MachineConfig{
 			Image: image,
-			Env: map[string]string{
-				"CONNECT_TOKEN": connectToken,
-				"CATTY_CMD":     joinCmd(req.Cmd),
-			},
+			Env:   machineEnv,
 			Services: []fly.MachineService{
 				{
 					Protocol:     "tcp",

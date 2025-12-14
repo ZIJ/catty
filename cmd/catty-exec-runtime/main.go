@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +13,13 @@ import (
 )
 
 func main() {
+	// Configure structured logging
+	level := slog.LevelInfo
+	if os.Getenv("CATTY_DEBUG") != "" {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+
 	addr := os.Getenv("CATTY_EXEC_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -37,7 +44,7 @@ func main() {
 
 	// Start server
 	go func() {
-		log.Printf("Starting executor server on %s", addr)
+		slog.Info("starting executor server", "addr", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
@@ -46,9 +53,10 @@ func main() {
 	// Wait for shutdown or error
 	select {
 	case err := <-serverErr:
-		log.Fatalf("Server error: %v", err)
+		slog.Error("server error", "error", err)
+		os.Exit(1)
 	case <-shutdown:
-		log.Println("Shutting down server...")
+		slog.Info("shutting down server")
 	}
 
 	// Graceful shutdown
@@ -56,8 +64,9 @@ func main() {
 	defer cancel()
 
 	if err := httpServer.Shutdown(ctx); err != nil {
-		log.Fatalf("Shutdown error: %v", err)
+		slog.Error("shutdown error", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("Server stopped")
+	slog.Info("server stopped")
 }
