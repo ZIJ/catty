@@ -1,10 +1,6 @@
 package api
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -20,74 +16,18 @@ type Session struct {
 }
 
 // SessionStore manages session persistence.
+// Uses in-memory storage - sessions are ephemeral and can be reconstructed
+// from Fly Machine metadata if needed.
 type SessionStore struct {
-	path     string
 	mu       sync.RWMutex
 	sessions map[string]*Session
 }
 
 // NewSessionStore creates a new session store.
-// Sessions are stored in ~/.catty/sessions.json.
 func NewSessionStore() (*SessionStore, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("get home directory: %w", err)
-	}
-
-	cattyDir := filepath.Join(homeDir, ".catty")
-	if err := os.MkdirAll(cattyDir, 0700); err != nil {
-		return nil, fmt.Errorf("create .catty directory: %w", err)
-	}
-
-	store := &SessionStore{
-		path:     filepath.Join(cattyDir, "sessions.json"),
+	return &SessionStore{
 		sessions: make(map[string]*Session),
-	}
-
-	if err := store.load(); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("load sessions: %w", err)
-	}
-
-	return store, nil
-}
-
-// load reads sessions from disk.
-func (s *SessionStore) load() error {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return err
-	}
-
-	var sessions []*Session
-	if err := json.Unmarshal(data, &sessions); err != nil {
-		return fmt.Errorf("unmarshal sessions: %w", err)
-	}
-
-	s.sessions = make(map[string]*Session)
-	for _, sess := range sessions {
-		s.sessions[sess.SessionID] = sess
-	}
-
-	return nil
-}
-
-// save writes sessions to disk.
-func (s *SessionStore) save() error {
-	sessions := make([]*Session, 0, len(s.sessions))
-	for _, sess := range s.sessions {
-		sessions = append(sessions, sess)
-	}
-
-	data, err := json.MarshalIndent(sessions, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal sessions: %w", err)
-	}
-
-	if err := os.WriteFile(s.path, data, 0600); err != nil {
-		return fmt.Errorf("write sessions file: %w", err)
-	}
-
-	return nil
+	}, nil
 }
 
 // Save stores a new session.
@@ -96,7 +36,7 @@ func (s *SessionStore) Save(session *Session) error {
 	defer s.mu.Unlock()
 
 	s.sessions[session.SessionID] = session
-	return s.save()
+	return nil
 }
 
 // Get retrieves a session by ID.
@@ -126,5 +66,5 @@ func (s *SessionStore) Delete(sessionID string) error {
 	defer s.mu.Unlock()
 
 	delete(s.sessions, sessionID)
-	return s.save()
+	return nil
 }

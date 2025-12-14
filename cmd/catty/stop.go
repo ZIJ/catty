@@ -22,7 +22,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 	opts := &cli.StopOptions{
 		SessionID: args[0],
 		Delete:    deleteMachine,
-		APIAddr:   apiAddr,
+		APIAddr:   getAPIAddr(),
 	}
 	return cli.Stop(opts)
 }

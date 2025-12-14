@@ -4,11 +4,11 @@ Runs Claude Code (and potentially other agents like Codex) remotely on Fly.io ma
 
 ## Project Status
 
-**Milestone 0: COMPLETE**
+**Milestone 1: COMPLETE**
 
 The following is implemented and working:
-- `catty` CLI for starting and managing sessions
-- `catty-api` local API server that creates Fly machines
+- `catty` CLI distributed via npm for easy installation
+- `catty-api` hosted on Fly.io (no local server needed)
 - `catty-exec-runtime` executor that runs inside Fly machines
 - Claude Code integration with automatic API key approval
 - WebSocket-based PTY streaming with local terminal feel
@@ -18,34 +18,37 @@ The following is implemented and working:
 
 ## Quick Start
 
-### Prerequisites
+### Installation
 
-1. Fly.io account with `FLY_API_TOKEN` set
-2. `ANTHROPIC_API_KEY` for Claude Code
-3. The `catty-exec` Fly app deployed (see Deployment section)
-
-### Running
-
-Terminal 1 - Start the API server:
 ```bash
+# Install globally via npm
+npm install -g catty-cli
+
+# Or use directly with npx
+npx catty-cli new
+```
+
+### Usage
+
+```bash
+catty new                    # Start Claude Code, uploads current directory
+catty new --agent codex      # Use Codex instead
+catty new --no-upload        # Don't upload current directory
+catty list                   # List active sessions
+catty stop <session-id>      # Stop a session
+```
+
+### For Development (Local API)
+
+If running the API locally:
+```bash
+# Terminal 1 - Start local API server
 export FLY_API_TOKEN=...
 export ANTHROPIC_API_KEY=...
 ./bin/catty-api
-```
 
-Terminal 2 - Start a new session:
-```bash
-./bin/catty new                    # Default: Claude Code, uploads current directory
-./bin/catty new --agent codex      # Or use Codex
-./bin/catty new --no-upload        # Don't upload current directory
-```
-
-### Other Commands
-
-```bash
-./bin/catty list                                    # List active sessions
-./bin/catty stop <session-id>                       # Stop a session
-./bin/catty stop-all-sessions-dangerously --yes-i-mean-it  # Stop all sessions
+# Terminal 2 - Use local API
+catty new --api http://127.0.0.1:4815
 ```
 
 ---
@@ -55,15 +58,15 @@ Terminal 2 - Start a new session:
 ### Components
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌──────────────────────┐
-│   catty     │────▶│  catty-api  │────▶│  Fly Machines API    │
-│   (CLI)     │     │ (localhost) │     │                      │
-└──────┬──────┘     └─────────────┘     └──────────────────────┘
+┌─────────────┐     ┌─────────────────────┐     ┌──────────────────────┐
+│   catty     │────▶│     catty-api       │────▶│  Fly Machines API    │
+│   (CLI)     │     │ (catty-api.fly.dev) │     │   (internal)         │
+└──────┬──────┘     └─────────────────────┘     └──────────────────────┘
        │
-       │ WebSocket (direct)
+       │ HTTP (upload) + WebSocket (terminal)
        ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                     Fly Machine                              │
+│                     Fly Machine (catty-exec)                 │
 │  ┌─────────────────────┐    ┌─────────────────────────────┐  │
 │  │ catty-exec-runtime  │───▶│  claude-wrapper + claude    │  │
 │  │    (WS server)      │    │       (PTY process)         │  │
@@ -73,7 +76,7 @@ Terminal 2 - Start a new session:
 
 ### Data Flow
 
-1. `catty new` calls local API (`POST /v1/sessions`)
+1. `catty new` calls hosted API (`POST /v1/sessions` on catty-api.fly.dev)
 2. API creates Fly Machine with connect token and command
 3. API returns connection details to CLI
 4. CLI zips current directory (respecting .gitignore) and uploads to executor via HTTP
@@ -97,7 +100,7 @@ catty/
 │   │   ├── list.go             # 'list' command - list sessions
 │   │   ├── stop.go             # 'stop' command - stop session
 │   │   └── stopall.go          # 'stop-all-sessions-dangerously'
-│   ├── catty-api/              # Local API server binary
+│   ├── catty-api/              # API server binary (deployed to Fly)
 │   │   └── main.go
 │   └── catty-exec-runtime/     # Executor (runs in Fly Machine)
 │       └── main.go
@@ -120,8 +123,15 @@ catty/
 │       └── messages.go         # WS message types
 ├── scripts/
 │   └── claude-wrapper.sh       # Pre-approves API key before launching claude
+├── npm/                        # npm package for CLI distribution
+│   ├── package.json
+│   ├── scripts/install.js      # Downloads platform-specific binary
+│   └── README.md
 ├── Dockerfile                  # For catty-exec-runtime
-├── fly.toml                    # Fly app config
+├── Dockerfile.api              # For catty-api
+├── fly.toml                    # Fly config for catty-exec
+├── fly.api.toml                # Fly config for catty-api
+├── Makefile                    # Build and release commands
 ├── go.mod
 └── AGENTS.md                   # This file
 ```
@@ -132,14 +142,20 @@ catty/
 
 ### Environment Variables
 
-**catty-api (local):**
+**catty CLI:**
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `FLY_API_TOKEN` | Fly.io API token | Required |
-| `FLY_MACHINES_API_BASE` | Machines API URL | `https://api.machines.dev` |
+| `CATTY_API_ADDR` | Override API URL | `https://catty-api.fly.dev` |
+| `ANTHROPIC_API_KEY` | Passed to remote sessions | Required for Claude |
+
+**catty-api (hosted on Fly):**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `FLY_API_TOKEN` | Fly.io API token | Required (set as secret) |
+| `FLY_MACHINES_API_BASE` | Machines API URL | `http://_api.internal:4280` |
 | `CATTY_EXEC_APP` | Fly app name for executor | `catty-exec` |
-| `CATTY_API_ADDR` | API listen address | `127.0.0.1:4815` |
-| `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required for Claude |
+| `CATTY_API_ADDR` | API listen address | `0.0.0.0:8080` |
+| `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required (set as secret) |
 
 **catty-exec-runtime (in Fly Machine):**
 | Variable | Description |
@@ -275,31 +291,95 @@ The full Debian image is ~1GB (vs ~200MB for Alpine), but provides a complete de
 ### Initial Setup (One-time)
 
 ```bash
-# Create the Fly app
+# Create the Fly apps
 fly apps create catty-exec
+fly apps create catty-api
 
-# Allocate shared IPv4 (required for public services via Machines API)
+# Allocate shared IPv4 for executor (required for direct WS connections)
 fly ips allocate-v4 --shared -a catty-exec
 
-# Deploy the executor image
-fly deploy --app catty-exec
+# Set secrets for API (required for creating machines and Claude)
+fly secrets set FLY_API_TOKEN=... -a catty-api
+fly secrets set ANTHROPIC_API_KEY=... -a catty-api
+
+# Deploy both services
+make deploy-api   # or: fly deploy -c fly.api.toml
+make deploy-exec  # or: fly deploy
 ```
 
-### Updating the Executor
+### Updating Services
 
 ```bash
-fly deploy --app catty-exec
+# Update executor (catty-exec)
+make deploy-exec
+# or: fly deploy --app catty-exec
+
+# Update API (catty-api)
+make deploy-api
+# or: fly deploy -c fly.api.toml
 ```
 
 ### Viewing Logs
 
 ```bash
+# Executor logs
 fly logs -a catty-exec
+
+# API logs
+fly logs -a catty-api
 ```
 
 ### Getting Current Image
 
 The API automatically fetches the current deployed image from existing machines. It looks for machines with `fly_process_group: app` metadata (set by `fly deploy`).
+
+---
+
+## npm Distribution
+
+The CLI is distributed via npm for easy installation.
+
+### Building Releases
+
+```bash
+# Build binaries for all platforms
+make release
+
+# This creates:
+# dist/catty-darwin-amd64
+# dist/catty-darwin-arm64
+# dist/catty-linux-amd64
+# dist/catty-linux-arm64
+# dist/catty-windows-amd64.exe
+# dist/catty-windows-arm64.exe
+```
+
+### Creating a GitHub Release
+
+1. Tag the release:
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+2. Upload binaries to GitHub release (manually or via CI)
+
+3. Update version in `npm/package.json` and `npm/scripts/install.js`
+
+### Publishing to npm
+
+```bash
+cd npm
+npm publish
+```
+
+### How It Works
+
+The npm package uses a postinstall script (`scripts/install.js`) that:
+1. Detects the user's platform (darwin/linux/windows) and architecture (amd64/arm64)
+2. Downloads the matching binary from GitHub releases
+3. Places it in `node_modules/catty-cli/bin/catty`
+4. The `bin` field in `package.json` creates the `catty` command
 
 ---
 
@@ -446,14 +526,16 @@ Keepalive ping/pong should prevent this. Check that ping messages are being sent
 
 ## Future Milestones
 
-### Milestone 1: Deploy API to Fly
-- Switch Machines API to internal endpoint: `http://_api.internal:4280`
-- Use machine metadata for session storage instead of local file
-
 ### Milestone 2: Multi-tenancy
 - Add user authentication
 - Add quotas and billing
 - Replace capability tokens with signed JWTs
+
+### Milestone 3: Enhanced Features
+- Session resume (reconnect to existing session)
+- Download workspace changes back to local
+- Multiple concurrent sessions per user
+- Session timeout warnings
 
 ---
 

@@ -44,7 +44,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		CPUs:            1,
 		MemoryMB:        1024,
 		TTLSec:          7200,
-		APIAddr:         apiAddr,
+		APIAddr:         getAPIAddr(),
 		UploadWorkspace: !noUpload,
 	}
 

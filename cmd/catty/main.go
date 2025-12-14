@@ -7,6 +7,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	// DefaultAPIAddr is the default API server address (hosted on Fly)
+	DefaultAPIAddr = "https://catty-api.fly.dev"
+)
+
 var apiAddr string
 
 func main() {
@@ -16,7 +21,7 @@ func main() {
 		Long:  "Run AI agents remotely on Fly.io with local terminal feel",
 	}
 
-	rootCmd.PersistentFlags().StringVar(&apiAddr, "api", "", "API server address (default: http://127.0.0.1:4815)")
+	rootCmd.PersistentFlags().StringVar(&apiAddr, "api", "", fmt.Sprintf("API server address (default: %s)", DefaultAPIAddr))
 
 	rootCmd.AddCommand(newCmd)
 	rootCmd.AddCommand(listCmd)
@@ -27,4 +32,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// getAPIAddr returns the API address to use.
+func getAPIAddr() string {
+	if apiAddr != "" {
+		return apiAddr
+	}
+	if env := os.Getenv("CATTY_API_ADDR"); env != "" {
+		return env
+	}
+	return DefaultAPIAddr
 }

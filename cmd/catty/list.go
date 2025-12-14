@@ -14,7 +14,7 @@ var listCmd = &cobra.Command{
 
 func runList(cmd *cobra.Command, args []string) error {
 	opts := &cli.ListOptions{
-		APIAddr: apiAddr,
+		APIAddr: getAPIAddr(),
 	}
 	return cli.List(opts)
 }

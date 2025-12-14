@@ -24,7 +24,7 @@ func runStopAll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("must pass --yes-i-mean-it to confirm")
 	}
 
-	client := cli.NewAPIClient(apiAddr)
+	client := cli.NewAPIClient(getAPIAddr())
 
 	sessions, err := client.ListSessions()
 	if err != nil {
