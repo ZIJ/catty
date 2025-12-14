@@ -206,12 +206,13 @@ We handle these by pre-configuring `~/.claude.json` in the Docker image and usin
 
 ```dockerfile
 # Pre-populate claude.json to skip onboarding prompts
-RUN echo '{"numStartups":1,"installMethod":"npm","autoUpdates":false,"hasCompletedOnboarding":true,"lastOnboardingVersion":"1.0.0","projects":{"/":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true}}}' > /root/.claude.json
+RUN echo '{"numStartups":1,"installMethod":"npm","autoUpdates":false,"hasCompletedOnboarding":true,"lastOnboardingVersion":"1.0.0","projects":{"/":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true},"/workspace":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true}}}' > /root/.claude.json
 ```
 
 This sets:
 - `hasCompletedOnboarding: true` - Skips onboarding wizard
 - `projects["/"].hasTrustDialogAccepted: true` - Pre-trusts root directory
+- `projects["/workspace"].hasTrustDialogAccepted: true` - Pre-trusts workspace directory
 - `numStartups > 0` - Signals this isn't a fresh install
 
 ### API Key Auto-Approval (claude-wrapper.sh)
@@ -235,6 +236,40 @@ This adds the API key suffix to `customApiKeyResponses.approved`, which Claude C
 
 ---
 
+## Docker Image
+
+The executor runs in a Debian-based image (`node:22-bookworm`) with a full set of development tools.
+
+### Why Debian (not Alpine)
+
+Alpine Linux was initially used for smaller image size, but Claude Code needs many tools to function properly:
+- Shell tools (bash, ls, cat, grep, find, etc.)
+- ripgrep (`rg`) for Claude's Grep tool
+- Git for version control
+- Build tools for installing packages
+
+Alpine required manually installing each tool, leading to missing dependencies. Debian includes these by default.
+
+### Installed Tools
+
+The Dockerfile installs:
+- `build-essential` - gcc, make, etc.
+- `curl`, `wget` - HTTP clients
+- `git` - Version control
+- `jq` - JSON processing (used by wrapper script)
+- `ripgrep` - Fast grep (required by Claude Code)
+- `vim` - Text editor
+- `tree` - Directory visualization
+- `procps` - ps, top, etc.
+- `openssh-client` - SSH tools
+- `zip`, `unzip` - Archive tools
+
+### Image Size
+
+The full Debian image is ~1GB (vs ~200MB for Alpine), but provides a complete development environment.
+
+---
+
 ## Deployment
 
 ### Initial Setup (One-time)
@@ -254,6 +289,12 @@ fly deploy --app catty-exec
 
 ```bash
 fly deploy --app catty-exec
+```
+
+### Viewing Logs
+
+```bash
+fly logs -a catty-exec
 ```
 
 ### Getting Current Image
@@ -386,6 +427,18 @@ The wrapper script should pre-approve the key. Check that:
 2. `ANTHROPIC_API_KEY` is passed to the machine
 3. The wrapper is being used (`claude-wrapper` not `claude`)
 
+### Claude Code can't find files or tools
+If Claude reports missing tools (ls, grep, rg, etc.) or can't explore directories:
+1. Make sure you're using the Debian-based image (`node:22-bookworm`), not Alpine
+2. Verify the image was deployed: `fly deploy --app catty-exec`
+3. Check that workspace upload succeeded (look for "Workspace uploaded" message)
+
+### Workspace files not appearing
+If the upload says successful but Claude doesn't see files:
+1. Check fly logs: `fly logs -a catty-exec`
+2. Look for "received workspace upload" and "workspace extracted" messages
+3. Verify the `/workspace` directory is being used as the working directory
+
 ### Connection drops after ~60s idle
 Keepalive ping/pong should prevent this. Check that ping messages are being sent every 25 seconds.
 
@@ -401,6 +454,44 @@ Keepalive ping/pong should prevent this. Check that ping messages are being sent
 - Add user authentication
 - Add quotas and billing
 - Replace capability tokens with signed JWTs
+
+---
+
+## Key Implementation Notes
+
+### Claude Code Configuration Discovery
+
+Claude Code stores its configuration in several locations:
+- `~/.claude.json` - Main config (onboarding state, project trust, API key approvals)
+- `~/.claude/settings.json` - User settings
+- `~/.claude/` directory - Projects, todos, statsig cache, etc.
+
+Key fields in `~/.claude.json`:
+- `numStartups` - Startup counter (>0 signals not a fresh install)
+- `hasCompletedOnboarding` - Skip onboarding wizard
+- `lastOnboardingVersion` - Version that completed onboarding
+- `projects` - Per-directory settings including `hasTrustDialogAccepted`
+- `customApiKeyResponses.approved` - Array of approved API key suffixes (last 20 chars)
+
+### API Key Approval Mechanism
+
+Claude Code tracks approved API keys by their suffix (last 20 characters). The wrapper script:
+1. Extracts the suffix: `echo "$ANTHROPIC_API_KEY" | tail -c 21`
+2. Adds it to `customApiKeyResponses.approved` array using `jq`
+3. This bypasses the "Do you want to use this API key?" prompt
+
+### Fly Machine Routing
+
+To route HTTP/WebSocket requests to a specific machine:
+- Use header: `fly-force-instance-id: <machine_id>`
+- This works for both the upload endpoint and WebSocket connection
+
+### Expect Script Limitations
+
+Initially tried using `expect` to auto-answer Claude's TUI prompts, but:
+- Claude Code uses a React-based TUI (Ink) with escape sequences
+- `expect` pattern matching doesn't work well with TUI-rendered prompts
+- Solution: Pre-configure everything in `~/.claude.json` instead
 
 ---
 

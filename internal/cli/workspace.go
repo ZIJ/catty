@@ -188,6 +188,8 @@ func (w *WorkspaceUploader) Upload(uploadURL, token, machineID string) error {
 		return err
 	}
 
+	fmt.Printf("Uploading %d bytes to %s\n", len(zipData), uploadURL)
+
 	req, err := http.NewRequest(http.MethodPost, uploadURL, bytes.NewReader(zipData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
