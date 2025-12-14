@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/coder/websocket"
 	"github.com/izalutski/catty/internal/protocol"
@@ -14,13 +15,14 @@ import (
 
 // RunOptions are the options for the run command.
 type RunOptions struct {
-	Agent    string
-	Cmd      []string
-	Region   string
-	CPUs     int
-	MemoryMB int
-	TTLSec   int
-	APIAddr  string
+	Agent           string
+	Cmd             []string
+	Region          string
+	CPUs            int
+	MemoryMB        int
+	TTLSec          int
+	APIAddr         string
+	UploadWorkspace bool
 }
 
 // Run starts a new session and connects to it.
@@ -42,10 +44,32 @@ func Run(opts *RunOptions) error {
 	}
 
 	fmt.Printf("Session created: %s (machine: %s)\n", resp.SessionID, resp.MachineID)
+
+	// Upload workspace if requested
+	if opts.UploadWorkspace {
+		fmt.Println("Uploading workspace...")
+		machineID := resp.Headers["fly-force-instance-id"]
+		uploadURL := buildUploadURL(resp.ConnectURL)
+		if err := UploadWorkspace(uploadURL, resp.ConnectToken, machineID); err != nil {
+			return fmt.Errorf("failed to upload workspace: %w", err)
+		}
+		fmt.Println("Workspace uploaded.")
+	}
+
 	fmt.Printf("Connecting to %s...\n", resp.ConnectURL)
 
 	// Connect to executor
 	return connect(resp)
+}
+
+// buildUploadURL converts the WebSocket connect URL to an HTTP upload URL.
+func buildUploadURL(connectURL string) string {
+	// Convert wss://app.fly.dev/connect to https://app.fly.dev/upload
+	url := connectURL
+	url = strings.Replace(url, "wss://", "https://", 1)
+	url = strings.Replace(url, "ws://", "http://", 1)
+	url = strings.Replace(url, "/connect", "/upload", 1)
+	return url
 }
 
 // connect establishes a WebSocket connection to the executor.

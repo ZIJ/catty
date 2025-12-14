@@ -17,10 +17,12 @@ var newCmd = &cobra.Command{
 
 func init() {
 	newCmd.Flags().String("agent", "claude", "Agent to use: claude or codex")
+	newCmd.Flags().Bool("no-upload", false, "Don't upload current directory to the remote session")
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
 	agent, _ := cmd.Flags().GetString("agent")
+	noUpload, _ := cmd.Flags().GetBool("no-upload")
 
 	var cmdArgs []string
 
@@ -36,13 +38,14 @@ func runNew(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Starting %s session...\n", agent)
 
 	opts := &cli.RunOptions{
-		Agent:    agent,
-		Cmd:      cmdArgs,
-		Region:   "iad",
-		CPUs:     1,
-		MemoryMB: 1024,
-		TTLSec:   7200,
-		APIAddr:  apiAddr,
+		Agent:           agent,
+		Cmd:             cmdArgs,
+		Region:          "iad",
+		CPUs:            1,
+		MemoryMB:        1024,
+		TTLSec:          7200,
+		APIAddr:         apiAddr,
+		UploadWorkspace: !noUpload,
 	}
 
 	return cli.Run(opts)

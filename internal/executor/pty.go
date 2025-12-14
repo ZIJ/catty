@@ -44,6 +44,12 @@ func NewPTY(name string, args ...string) *PTY {
 	}
 }
 
+// SetWorkDir sets the working directory for the process.
+// Must be called before Start.
+func (p *PTY) SetWorkDir(dir string) {
+	p.cmd.Dir = dir
+}
+
 // Start starts the process in a new PTY.
 func (p *PTY) Start() error {
 	p.mu.Lock()

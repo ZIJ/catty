@@ -1,9 +1,6 @@
-FROM golang:1.25-alpine AS go-builder
+FROM golang:1.25-bookworm AS go-builder
 
 WORKDIR /app
-
-# Install build dependencies
-RUN apk add --no-cache git
 
 # Copy go mod files
 COPY go.mod go.sum* ./
@@ -15,20 +12,31 @@ COPY . .
 # Build
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /catty-exec-runtime ./cmd/catty-exec-runtime
 
-# Claude installer stage
-FROM node:22-alpine AS claude-builder
+# Runtime image - use full Debian with Node.js for a complete environment
+FROM node:22-bookworm
 
+# Install useful tools that an AI agent might need
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    less \
+    man-db \
+    openssh-client \
+    procps \
+    ripgrep \
+    sudo \
+    tree \
+    unzip \
+    vim \
+    wget \
+    zip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code globally
 RUN npm install -g @anthropic-ai/claude-code
-
-# Runtime image
-FROM node:22-alpine
-
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates git jq
-
-# Copy claude from builder (npm global bin location)
-COPY --from=claude-builder /usr/local/bin/claude /usr/local/bin/claude
-COPY --from=claude-builder /usr/local/lib/node_modules/@anthropic-ai /usr/local/lib/node_modules/@anthropic-ai
 
 # Pre-create Claude Code config directories and settings
 RUN mkdir -p /root/.claude/projects /root/.claude/todos /root/.claude/statsig
@@ -36,8 +44,12 @@ RUN mkdir -p /root/.claude/projects /root/.claude/todos /root/.claude/statsig
 # Pre-populate claude.json to skip first-run onboarding prompts and pre-approve settings
 # - hasCompletedOnboarding: skip onboarding wizard
 # - projects["/"]: pre-trust the root directory
+# - projects["/workspace"]: pre-trust the workspace directory (where uploaded files go)
 # - customApiKeyResponses.approved: empty array, will be populated at runtime via wrapper
-RUN echo '{"numStartups":1,"installMethod":"npm","autoUpdates":false,"hasCompletedOnboarding":true,"lastOnboardingVersion":"1.0.0","projects":{"/":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true}}}' > /root/.claude.json
+RUN echo '{"numStartups":1,"installMethod":"npm","autoUpdates":false,"hasCompletedOnboarding":true,"lastOnboardingVersion":"1.0.0","projects":{"/":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true},"/workspace":{"allowedTools":[],"hasTrustDialogAccepted":true,"hasClaudeMdExternalIncludesApproved":true}}}' > /root/.claude.json
+
+# Pre-create workspace directory
+RUN mkdir -p /workspace
 
 # Wrapper script that pre-approves API key before launching claude
 COPY scripts/claude-wrapper.sh /usr/local/bin/claude-wrapper

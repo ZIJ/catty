@@ -12,6 +12,7 @@ The following is implemented and working:
 - `catty-exec-runtime` executor that runs inside Fly machines
 - Claude Code integration with automatic API key approval
 - WebSocket-based PTY streaming with local terminal feel
+- **Workspace sync**: Automatically uploads current directory to remote session
 
 ---
 
@@ -34,8 +35,9 @@ export ANTHROPIC_API_KEY=...
 
 Terminal 2 - Start a new session:
 ```bash
-./bin/catty new                    # Default: Claude Code
+./bin/catty new                    # Default: Claude Code, uploads current directory
 ./bin/catty new --agent codex      # Or use Codex
+./bin/catty new --no-upload        # Don't upload current directory
 ```
 
 ### Other Commands
@@ -74,11 +76,13 @@ Terminal 2 - Start a new session:
 1. `catty new` calls local API (`POST /v1/sessions`)
 2. API creates Fly Machine with connect token and command
 3. API returns connection details to CLI
-4. CLI connects directly to machine via WebSocket with:
+4. CLI zips current directory (respecting .gitignore) and uploads to executor via HTTP
+5. Executor extracts zip to `/workspace` directory
+6. CLI connects directly to machine via WebSocket with:
    - `fly-force-instance-id: <machine_id>` header
    - `Authorization: Bearer <connect_token>` header
-5. Executor validates token, spawns PTY, relays bytes bidirectionally
-6. CLI enters raw terminal mode, streams stdin/stdout
+7. Executor validates token, spawns PTY in `/workspace`, relays bytes bidirectionally
+8. CLI enters raw terminal mode, streams stdin/stdout
 
 ---
 
@@ -103,7 +107,8 @@ catty/
 │   │   └── handlers.go
 │   ├── cli/                    # CLI logic
 │   │   ├── run.go              # Session connection logic
-│   │   └── terminal.go         # Raw terminal handling
+│   │   ├── terminal.go         # Raw terminal handling
+│   │   └── workspace.go        # Workspace zip creation and upload
 │   ├── executor/               # Executor runtime logic
 │   │   ├── server.go           # HTTP/WS server
 │   │   ├── pty.go              # PTY management
@@ -143,6 +148,45 @@ catty/
 | `CATTY_CMD` | Command to run in PTY (set by API) |
 | `ANTHROPIC_API_KEY` | For Claude Code (set by API) |
 | `CATTY_DEBUG` | Set to `1` for debug logging |
+
+---
+
+## Workspace Sync
+
+By default, `catty new` uploads your current working directory to the remote session so Claude can work with your files.
+
+### How it Works
+
+1. CLI creates a zip file of the current directory
+2. Respects `.gitignore` patterns (plus default ignores for node_modules, .git, etc.)
+3. Uploads via HTTP POST to executor's `/upload` endpoint
+4. Executor extracts to `/workspace` directory
+5. PTY process starts with `/workspace` as working directory
+
+### Default Ignore Patterns
+
+The following are always ignored:
+- `.git`, `.git/**`
+- `node_modules`, `node_modules/**`
+- `__pycache__`, `*.pyc`
+- `.venv`, `venv`
+- `.env`
+- `.DS_Store`
+- `*.log`
+
+Plus all patterns from `.gitignore` if present.
+
+### Upload Limits
+
+- Maximum upload size: 100MB
+- Only one upload per session (subsequent uploads return 409 Conflict)
+
+### Disabling Upload
+
+Use `--no-upload` to skip workspace upload:
+```bash
+./bin/catty new --no-upload
+```
 
 ---
 
@@ -288,6 +332,25 @@ Stop and delete a session's machine.
 
 ### `POST /v1/sessions/stop-all`
 Stop all machines in the app (dangerous).
+
+---
+
+## Executor Endpoints
+
+These endpoints are on the executor (Fly Machine), not the local API.
+
+### `GET /healthz`
+Health check, returns `200 OK`.
+
+### `POST /upload`
+Upload workspace zip file. Requires `Authorization: Bearer <token>` header.
+- Content-Type: `application/zip`
+- Max size: 100MB
+- Extracts to `/workspace`
+- Returns 409 if already uploaded
+
+### `GET /connect` (WebSocket)
+WebSocket connection for PTY streaming. Requires `Authorization: Bearer <token>` header.
 
 ---
 
