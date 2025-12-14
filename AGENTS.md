@@ -1,15 +1,15 @@
 # Catty - Remote Agent Streaming
 
-Runs Claude Code (and potentially other agents like Codex) remotely on Fly.io machines, streaming PTY to the user so it feels like working with a local agent.
+Runs Claude Code sessions remotely, streaming PTY to the user so it feels like working with a local agent.
 
 ## Project Status
 
 **Milestone 1: COMPLETE**
 
 The following is implemented and working:
-- `catty` CLI distributed via npm for easy installation
-- `catty-api` hosted on Fly.io (no local server needed)
-- `catty-exec-runtime` executor that runs inside Fly machines
+- `catty` CLI distributed via npm (`@izalutski/catty`)
+- `catty-api` hosted in the cloud (no local server needed)
+- `catty-exec-runtime` executor that runs inside cloud machines
 - Claude Code integration with automatic API key approval
 - WebSocket-based PTY streaming with local terminal feel
 - **Workspace sync**: Automatically uploads current directory to remote session
@@ -22,10 +22,10 @@ The following is implemented and working:
 
 ```bash
 # Install globally via npm
-npm install -g catty-cli
+npm install -g @izalutski/catty
 
 # Or use directly with npx
-npx catty-cli new
+npx @izalutski/catty new
 ```
 
 ### Usage

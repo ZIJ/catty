@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	// DefaultAPIAddr is the default API server address (hosted on Fly)
+	// DefaultAPIAddr is the default API server address
 	DefaultAPIAddr = "https://catty-api.fly.dev"
 )
 
@@ -18,7 +18,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "catty",
 		Short: "Catty - Remote AI agent sessions",
-		Long:  "Run AI agents remotely on Fly.io with local terminal feel",
+		Long:  "Run Claude Code sessions remotely",
 	}
 
 	rootCmd.PersistentFlags().StringVar(&apiAddr, "api", "", fmt.Sprintf("API server address (default: %s)", DefaultAPIAddr))
