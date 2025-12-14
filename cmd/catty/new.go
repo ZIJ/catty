@@ -21,6 +21,12 @@ func init() {
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
+	// Check if logged in
+	if !cli.IsLoggedIn() {
+		fmt.Fprintln(os.Stderr, "Not logged in. Please run 'catty login' first.")
+		return fmt.Errorf("authentication required")
+	}
+
 	agent, _ := cmd.Flags().GetString("agent")
 	noUpload, _ := cmd.Flags().GetBool("no-upload")
 

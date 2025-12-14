@@ -14,8 +14,9 @@ const DefaultAPIAddr = "http://127.0.0.1:4815"
 
 // APIClient is a client for the local TUI API.
 type APIClient struct {
-	baseURL string
-	client  *http.Client
+	baseURL   string
+	client    *http.Client
+	authToken string
 }
 
 // NewAPIClient creates a new API client.
@@ -24,11 +25,27 @@ func NewAPIClient(baseURL string) *APIClient {
 		baseURL = DefaultAPIAddr
 	}
 	return &APIClient{
-		baseURL: baseURL,
+		baseURL:   baseURL,
+		authToken: GetAccessToken(), // Load from stored credentials
 		client: &http.Client{
 			Timeout: 120 * time.Second, // Long timeout for machine creation
 		},
 	}
+}
+
+// doRequest performs an HTTP request with auth headers.
+func (c *APIClient) doRequest(method, url string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+	return c.client.Do(req)
 }
 
 // CreateSessionRequest is the request body for creating a session.
@@ -67,7 +84,7 @@ func (c *APIClient) CreateSession(req *CreateSessionRequest) (*CreateSessionResp
 		return nil, err
 	}
 
-	resp, err := c.client.Post(c.baseURL+"/v1/sessions", "application/json", bytes.NewReader(body))
+	resp, err := c.doRequest("POST", c.baseURL+"/v1/sessions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +104,7 @@ func (c *APIClient) CreateSession(req *CreateSessionRequest) (*CreateSessionResp
 
 // ListSessions lists all sessions.
 func (c *APIClient) ListSessions() ([]*SessionInfo, error) {
-	resp, err := c.client.Get(c.baseURL + "/v1/sessions")
+	resp, err := c.doRequest("GET", c.baseURL+"/v1/sessions", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +129,7 @@ func (c *APIClient) GetSession(sessionID string, live bool) (*SessionInfo, error
 		url += "?live=true"
 	}
 
-	resp, err := c.client.Get(url)
+	resp, err := c.doRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +154,7 @@ func (c *APIClient) StopSession(sessionID string, delete bool) error {
 		url += "?delete=true"
 	}
 
-	resp, err := c.client.Post(url, "", nil)
+	resp, err := c.doRequest("POST", url, nil)
 	if err != nil {
 		return err
 	}

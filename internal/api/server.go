@@ -36,6 +36,12 @@ func NewServer(addr string) (*Server, error) {
 		return nil, fmt.Errorf("create session store: %w", err)
 	}
 
+	// Initialize auth handlers
+	authHandlers, err := NewAuthHandlers()
+	if err != nil {
+		return nil, fmt.Errorf("create auth handlers: %w", err)
+	}
+
 	// Create handlers
 	handlers := NewHandlers(flyClient, store)
 
@@ -49,10 +55,18 @@ func NewServer(addr string) (*Server, error) {
 
 	// Routes
 	r.Route("/v1", func(r chi.Router) {
-		r.Post("/sessions", handlers.CreateSession)
-		r.Get("/sessions", handlers.ListSessions)
-		r.Get("/sessions/{session_id}", handlers.GetSession)
-		r.Post("/sessions/{session_id}/stop", handlers.StopSession)
+		// Auth endpoints (public)
+		r.Post("/auth/device", authHandlers.StartDeviceAuth)
+		r.Post("/auth/device/token", authHandlers.PollDeviceToken)
+
+		// Protected session endpoints
+		r.Group(func(r chi.Router) {
+			r.Use(authHandlers.AuthMiddleware)
+			r.Post("/sessions", handlers.CreateSession)
+			r.Get("/sessions", handlers.ListSessions)
+			r.Get("/sessions/{session_id}", handlers.GetSession)
+			r.Post("/sessions/{session_id}/stop", handlers.StopSession)
+		})
 	})
 
 	// Health check

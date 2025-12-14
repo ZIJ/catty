@@ -99,7 +99,9 @@ catty/
 │   │   ├── new.go              # 'new' command - start session
 │   │   ├── list.go             # 'list' command - list sessions
 │   │   ├── stop.go             # 'stop' command - stop session
-│   │   └── stopall.go          # 'stop-all-sessions-dangerously'
+│   │   ├── stopall.go          # 'stop-all-sessions-dangerously'
+│   │   ├── login.go            # 'login' command - authenticate
+│   │   └── logout.go           # 'logout' command - remove credentials
 │   ├── catty-api/              # API server binary (deployed to Fly)
 │   │   └── main.go
 │   └── catty-exec-runtime/     # Executor (runs in Fly Machine)
@@ -107,11 +109,13 @@ catty/
 ├── internal/
 │   ├── api/                    # API server logic
 │   │   ├── server.go
-│   │   └── handlers.go
+│   │   ├── handlers.go
+│   │   └── auth.go             # WorkOS authentication
 │   ├── cli/                    # CLI logic
 │   │   ├── run.go              # Session connection logic
 │   │   ├── terminal.go         # Raw terminal handling
-│   │   └── workspace.go        # Workspace zip creation and upload
+│   │   ├── workspace.go        # Workspace zip creation and upload
+│   │   └── auth.go             # Credentials storage
 │   ├── executor/               # Executor runtime logic
 │   │   ├── server.go           # HTTP/WS server
 │   │   ├── pty.go              # PTY management
@@ -156,6 +160,8 @@ catty/
 | `CATTY_EXEC_APP` | Fly app name for executor | `catty-exec` |
 | `CATTY_API_ADDR` | API listen address | `0.0.0.0:8080` |
 | `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required (set as secret) |
+| `WORKOS_CLIENT_ID` | WorkOS application client ID | Required (set as secret) |
+| `WORKOS_API_KEY` | WorkOS API key | Required (set as secret) |
 
 **catty-exec-runtime (in Fly Machine):**
 | Variable | Description |
@@ -164,6 +170,63 @@ catty/
 | `CATTY_CMD` | Command to run in PTY (set by API) |
 | `ANTHROPIC_API_KEY` | For Claude Code (set by API) |
 | `CATTY_DEBUG` | Set to `1` for debug logging |
+
+---
+
+## Authentication
+
+Catty uses WorkOS for user authentication via OAuth 2.0 Device Authorization Grant (RFC 8628).
+
+### User Flow
+
+1. User runs `catty login`
+2. CLI calls API to start device auth flow
+3. CLI displays verification URL and code, opens browser automatically
+4. User authenticates in browser (email, Google, SSO, etc.)
+5. CLI polls for token until authentication completes
+6. Credentials are stored in `~/.catty/credentials.json`
+7. All subsequent API calls include the access token
+
+### CLI Commands
+
+```bash
+catty login     # Authenticate with Catty
+catty logout    # Remove stored credentials
+```
+
+### Credentials Storage
+
+Credentials are stored locally at `~/.catty/credentials.json`:
+```json
+{
+  "access_token": "...",
+  "user_id": "user_...",
+  "email": "user@example.com"
+}
+```
+
+The file has restricted permissions (0600) and is never transmitted except to the API.
+
+### API Endpoints
+
+**Public (no auth required):**
+- `POST /v1/auth/device` - Start device authorization flow
+- `POST /v1/auth/device/token` - Poll for access token
+
+**Protected (requires `Authorization: Bearer <token>`):**
+- All `/v1/sessions/*` endpoints
+
+### WorkOS Setup
+
+1. Create a WorkOS account at https://workos.com
+2. Create an application and enable User Management
+3. Enable authentication methods (email, Google, etc.)
+4. Get your Client ID and API Key
+5. Set as Fly secrets:
+   ```bash
+   fly secrets set WORKOS_CLIENT_ID=client_... -a catty-api
+   fly secrets set WORKOS_API_KEY=sk_... -a catty-api
+   ```
 
 ---
 
