@@ -8,6 +8,10 @@ When instructed to "add a task" or "add to roadmap":
 1. Add a brief bullet point to the **Roadmap** section in `README.md`
 2. Add a more detailed subsection under **Roadmap** in this file (`AGENTS.md`) with implementation notes
 
+Commit messages:
+- Keep to one-liners, no extended descriptions
+- Example: `Fix upload timeout, add progress indicators to roadmap`
+
 ---
 
 ## Project Status
