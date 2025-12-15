@@ -633,6 +633,22 @@ Custom domains configured:
 
 CLI default updated to use `api.catty.dev`. WebSocket URLs use `CATTY_EXEC_HOST` env var.
 
+### Documentation Site (Mintlify)
+Create comprehensive documentation hosted on Mintlify (e.g., `docs.catty.dev`):
+- **Getting Started**: Installation, login, first session
+- **Commands Reference**: All CLI commands with examples
+- **How It Works**: Architecture overview, data flow, security model
+- **Configuration**: Environment variables, workspace sync options
+- **Troubleshooting**: Common issues and solutions
+- **API Reference**: REST endpoints for programmatic access (if needed)
+
+Setup:
+1. Create `docs/` directory with Mintlify structure
+2. `mint.json` config with navigation, colors, logo
+3. Content pages in MDX format
+4. Deploy via Mintlify (connects to GitHub repo)
+5. Configure `docs.catty.dev` subdomain
+
 ### Usage Metering & Billing
 Track per-user token usage and implement billing:
 - **Token tracking**: Intercept/proxy Anthropic API calls to count tokens per user, or use Anthropic's usage API if available

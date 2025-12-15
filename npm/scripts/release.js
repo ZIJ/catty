@@ -25,8 +25,8 @@ const packageJson = require('../package.json');
 const version = packageJson.version;
 console.log(`\nReleasing v${version}...\n`);
 
-// 3. Build binaries
-run('make release');
+// 3. Build binaries (pass version to Makefile)
+run(`make release VERSION=${version}`);
 
 // 4. Create GitHub release
 run(`gh release create v${version} dist/* --title "v${version}" --notes "Release v${version}"`);
