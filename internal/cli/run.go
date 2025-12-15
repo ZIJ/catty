@@ -43,7 +43,8 @@ func Run(opts *RunOptions) error {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
-	fmt.Printf("Session created: %s (machine: %s)\n", resp.SessionID, resp.MachineID)
+	fmt.Printf("Session created: %s\n", resp.Label)
+	fmt.Printf("  Reconnect with: catty connect %s\n", resp.Label)
 
 	// Upload workspace if requested
 	if opts.UploadWorkspace {

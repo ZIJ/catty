@@ -27,6 +27,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&apiAddr, "api", "", fmt.Sprintf("API server address (default: %s)", DefaultAPIAddr))
 
 	rootCmd.AddCommand(newCmd)
+	rootCmd.AddCommand(connectCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(stopCmd)
 	rootCmd.AddCommand(stopAllCmd)

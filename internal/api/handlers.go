@@ -7,11 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/user"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
+	"github.com/izalutski/catty/internal/db"
 	"github.com/izalutski/catty/internal/fly"
 )
 
@@ -28,6 +27,7 @@ type CreateSessionRequest struct {
 // CreateSessionResponse is the response for creating a session.
 type CreateSessionResponse struct {
 	SessionID    string            `json:"session_id"`
+	Label        string            `json:"label"`
 	MachineID    string            `json:"machine_id"`
 	ConnectURL   string            `json:"connect_url"`
 	ConnectToken string            `json:"connect_token"`
@@ -37,9 +37,12 @@ type CreateSessionResponse struct {
 // SessionResponse is the response for getting a session.
 type SessionResponse struct {
 	SessionID    string    `json:"session_id"`
+	Label        string    `json:"label"`
 	MachineID    string    `json:"machine_id"`
 	ConnectURL   string    `json:"connect_url"`
+	ConnectToken string    `json:"connect_token,omitempty"`
 	Region       string    `json:"region"`
+	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	MachineState string    `json:"machine_state,omitempty"`
 }
@@ -52,14 +55,14 @@ type ErrorResponse struct {
 // Handlers contains HTTP handlers for the API.
 type Handlers struct {
 	flyClient *fly.Client
-	store     *SessionStore
+	db        *db.Client
 }
 
 // NewHandlers creates new API handlers.
-func NewHandlers(flyClient *fly.Client, store *SessionStore) *Handlers {
+func NewHandlers(flyClient *fly.Client, dbClient *db.Client) *Handlers {
 	return &Handlers{
 		flyClient: flyClient,
-		store:     store,
+		db:        dbClient,
 	}
 }
 
@@ -77,20 +80,27 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate session ID and connect token
-	sessionID := uuid.New().String()
+	// Get authenticated user from context
+	authUser := UserFromContext(r.Context())
+	if authUser == nil {
+		writeError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	// Get or create user in database
+	dbUser, err := h.db.GetOrCreateUser(authUser.ID, authUser.Email)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get/create user: "+err.Error())
+		return
+	}
+
+	// Generate connect token and label
 	connectToken, err := generateToken(32)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to generate token: "+err.Error())
 		return
 	}
-
-	// Get current user for metadata
-	currentUser, _ := user.Current()
-	owner := "unknown"
-	if currentUser != nil {
-		owner = currentUser.Username
-	}
+	label := db.GenerateLabel()
 
 	// Set defaults
 	if req.Region == "" || req.Region == "auto" {
@@ -147,8 +157,8 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 			},
 			Metadata: map[string]string{
 				"project": "catty",
-				"session": sessionID,
-				"owner":   owner,
+				"label":   label,
+				"owner":   authUser.Email,
 				"agent":   req.Agent,
 			},
 		},
@@ -177,23 +187,26 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	connectURL := fmt.Sprintf("wss://%s/connect", execHost)
 
-	// Save session
-	session := &Session{
-		SessionID:    sessionID,
+	// Save session to database
+	session := &db.Session{
+		UserID:       dbUser.ID,
 		MachineID:    machine.ID,
+		Label:        label,
 		ConnectToken: connectToken,
 		ConnectURL:   connectURL,
 		Region:       machine.Region,
-		CreatedAt:    time.Now(),
+		Status:       "running",
 	}
-	if err := h.store.Save(session); err != nil {
+	savedSession, err := h.db.CreateSession(session)
+	if err != nil {
 		// Log but don't fail - machine is already running
 		fmt.Printf("warning: failed to save session: %v\n", err)
 	}
 
 	// Return response
 	resp := &CreateSessionResponse{
-		SessionID:    sessionID,
+		SessionID:    savedSession.ID,
+		Label:        label,
 		MachineID:    machine.ID,
 		ConnectURL:   connectURL,
 		ConnectToken: connectToken,
@@ -207,14 +220,36 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 // ListSessions handles GET /v1/sessions.
 func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
-	sessions := h.store.List()
+	// Get authenticated user from context
+	authUser := UserFromContext(r.Context())
+	if authUser == nil {
+		writeError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	// Get user from database
+	dbUser, err := h.db.GetUserByWorkosID(authUser.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	// List user's sessions
+	sessions, err := h.db.ListUserSessions(dbUser.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list sessions: "+err.Error())
+		return
+	}
+
 	responses := make([]*SessionResponse, 0, len(sessions))
 	for _, s := range sessions {
 		responses = append(responses, &SessionResponse{
-			SessionID:  s.SessionID,
+			SessionID:  s.ID,
+			Label:      s.Label,
 			MachineID:  s.MachineID,
 			ConnectURL: s.ConnectURL,
 			Region:     s.Region,
+			Status:     s.Status,
 			CreatedAt:  s.CreatedAt,
 		})
 	}
@@ -222,20 +257,49 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetSession handles GET /v1/sessions/{session_id}.
+// session_id can be either the UUID or the label.
 func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
-	session, ok := h.store.Get(sessionID)
-	if !ok {
+
+	// Get authenticated user from context
+	authUser := UserFromContext(r.Context())
+	if authUser == nil {
+		writeError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	// Get user from database
+	dbUser, err := h.db.GetUserByWorkosID(authUser.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	// Try to get session by ID first, then by label
+	session, err := h.db.GetSessionByID(sessionID)
+	if err != nil {
+		session, err = h.db.GetSessionByLabel(dbUser.ID, sessionID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+	}
+
+	// Verify session belongs to user
+	if session.UserID != dbUser.ID {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
 	resp := &SessionResponse{
-		SessionID:  session.SessionID,
-		MachineID:  session.MachineID,
-		ConnectURL: session.ConnectURL,
-		Region:     session.Region,
-		CreatedAt:  session.CreatedAt,
+		SessionID:    session.ID,
+		Label:        session.Label,
+		MachineID:    session.MachineID,
+		ConnectURL:   session.ConnectURL,
+		ConnectToken: session.ConnectToken,
+		Region:       session.Region,
+		Status:       session.Status,
+		CreatedAt:    session.CreatedAt,
 	}
 
 	// Optionally fetch live machine state
@@ -250,10 +314,36 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // StopSession handles POST /v1/sessions/{session_id}/stop.
+// session_id can be either the UUID or the label.
 func (h *Handlers) StopSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
-	session, ok := h.store.Get(sessionID)
-	if !ok {
+
+	// Get authenticated user from context
+	authUser := UserFromContext(r.Context())
+	if authUser == nil {
+		writeError(w, http.StatusUnauthorized, "user not found in context")
+		return
+	}
+
+	// Get user from database
+	dbUser, err := h.db.GetUserByWorkosID(authUser.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	// Try to get session by ID first, then by label
+	session, err := h.db.GetSessionByID(sessionID)
+	if err != nil {
+		session, err = h.db.GetSessionByLabel(dbUser.ID, sessionID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+	}
+
+	// Verify session belongs to user
+	if session.UserID != dbUser.ID {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
@@ -273,8 +363,13 @@ func (h *Handlers) StopSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to delete machine: "+err.Error())
 			return
 		}
-		if err := h.store.Delete(sessionID); err != nil {
+		if err := h.db.DeleteSession(session.ID); err != nil {
 			fmt.Printf("warning: failed to delete session record: %v\n", err)
+		}
+	} else {
+		// Just update status
+		if err := h.db.UpdateSessionStatus(session.ID, "stopped"); err != nil {
+			fmt.Printf("warning: failed to update session status: %v\n", err)
 		}
 	}
 

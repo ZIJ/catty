@@ -34,8 +34,9 @@ catty login                  # Authenticate (required before first use)
 catty logout                 # Remove stored credentials
 catty new                    # Start Claude Code session (uploads current directory)
 catty new --no-upload        # Start without uploading workspace
-catty list                   # List active sessions
-catty stop <session-id>      # Stop a session
+catty connect <label>        # Reconnect to an existing session (WIP)
+catty list                   # List your sessions (shows labels)
+catty stop <label>           # Stop a session by label
 catty version                # Print version number
 ```
 
@@ -76,12 +77,13 @@ Maximum upload size: 100MB
 ## Roadmap
 
 - ~~**Custom domain** - Move away from *.fly.dev URLs~~ ✓
+- ~~**Persistent storage** - PostgreSQL for sessions and users~~ ✓
+- **Session reconnect** - Reconnect to existing sessions via `catty connect <label>` (WIP - DB done, reconnect buggy)
 - **Progress indicators** - Progress bars for uploads and other long operations
 - **Workspace sync-back** - Stream file changes from remote session back to local
 - **Documentation site** - Comprehensive docs with Mintlify
 - **Usage metering & billing** - Track per-user token usage, free tier + subscription ($25/mo target)
 - **Multi-key support** - Pool of API keys for handling load spikes
-- **Database backend** - Persistent storage for users, sessions, and usage (Supabase)
 
 ## Development
 

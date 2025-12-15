@@ -27,10 +27,10 @@ func List(opts *ListOptions) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SESSION ID\tMACHINE ID\tREGION\tCREATED")
+	fmt.Fprintln(w, "LABEL\tSTATUS\tREGION\tCREATED")
 	for _, s := range sessions {
 		age := formatAge(s.CreatedAt)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.SessionID, s.MachineID, s.Region, age)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Label, s.Status, s.Region, age)
 	}
 	w.Flush()
 

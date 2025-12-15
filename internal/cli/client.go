@@ -61,6 +61,7 @@ type CreateSessionRequest struct {
 // CreateSessionResponse is the response for creating a session.
 type CreateSessionResponse struct {
 	SessionID    string            `json:"session_id"`
+	Label        string            `json:"label"`
 	MachineID    string            `json:"machine_id"`
 	ConnectURL   string            `json:"connect_url"`
 	ConnectToken string            `json:"connect_token"`
@@ -70,9 +71,12 @@ type CreateSessionResponse struct {
 // SessionInfo is the response for getting session info.
 type SessionInfo struct {
 	SessionID    string    `json:"session_id"`
+	Label        string    `json:"label"`
 	MachineID    string    `json:"machine_id"`
 	ConnectURL   string    `json:"connect_url"`
+	ConnectToken string    `json:"connect_token,omitempty"`
 	Region       string    `json:"region"`
+	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	MachineState string    `json:"machine_state,omitempty"`
 }

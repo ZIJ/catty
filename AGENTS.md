@@ -26,6 +26,12 @@ The following is implemented and working:
 - WebSocket-based PTY streaming with local terminal feel
 - **Workspace sync**: Automatically uploads current directory to remote session
 - **User authentication**: WorkOS-based login via device flow
+- **Custom domains**: `api.catty.dev` and `exec.catty.dev`
+- **PostgreSQL storage**: Sessions and users persisted in database
+- **Session labels**: Memorable labels like "brave-tiger-1234" for easy identification
+
+**In Progress:**
+- Session reconnect (`catty connect <label>`) - DB done, reconnect buggy
 
 ---
 
@@ -49,8 +55,9 @@ catty logout                 # Remove stored credentials
 catty new                    # Start Claude Code, uploads current directory
 catty new --agent codex      # Use Codex instead (experimental, not pre-installed)
 catty new --no-upload        # Don't upload current directory
-catty list                   # List active sessions
-catty stop <session-id>      # Stop a session
+catty connect <label>        # Reconnect to existing session (WIP)
+catty list                   # List sessions (shows labels, status)
+catty stop <label>           # Stop a session by label
 catty version                # Print version number
 ```
 
@@ -61,6 +68,7 @@ If running the API locally:
 # Terminal 1 - Start local API server
 export FLY_API_TOKEN=...
 export ANTHROPIC_API_KEY=...
+export DATABASE_URL=postgresql://user:password@host:5432/database
 export WORKOS_CLIENT_ID=client_...
 export WORKOS_API_KEY=sk_...
 ./bin/catty-api
@@ -116,6 +124,7 @@ catty/
 │   ├── catty/                  # CLI binary
 │   │   ├── main.go
 │   │   ├── new.go              # 'new' command - start session
+│   │   ├── connect.go          # 'connect' command - reconnect to session
 │   │   ├── list.go             # 'list' command - list sessions
 │   │   ├── stop.go             # 'stop' command - stop session
 │   │   ├── stopall.go          # 'stop-all-sessions-dangerously'
@@ -130,11 +139,15 @@ catty/
 │   ├── api/                    # API server logic
 │   │   ├── server.go           # HTTP server setup and routing
 │   │   ├── handlers.go         # Session CRUD handlers
-│   │   ├── sessions.go         # In-memory session store
 │   │   └── auth.go             # WorkOS authentication
+│   ├── db/                     # Database layer
+│   │   ├── postgres.go         # PostgreSQL client (pgx)
+│   │   └── labels.go           # Memorable label generation
 │   ├── cli/                    # CLI logic
 │   │   ├── client.go           # API client with auth
-│   │   ├── run.go              # Session connection logic
+│   │   ├── run.go              # Session creation and connection
+│   │   ├── connect.go          # Reconnect to existing session
+│   │   ├── list.go             # List sessions
 │   │   ├── terminal.go         # Raw terminal handling
 │   │   ├── workspace.go        # Workspace zip creation and upload
 │   │   └── auth.go             # Credentials storage
@@ -186,6 +199,7 @@ catty/
 | `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required (set as secret) |
 | `WORKOS_CLIENT_ID` | WorkOS application client ID | Required (set as secret) |
 | `WORKOS_API_KEY` | WorkOS API key | Required (set as secret) |
+| `DATABASE_URL` | PostgreSQL connection string | Required (set as secret) |
 
 **catty-exec-runtime (in Fly Machine):**
 | Variable | Description |
@@ -530,6 +544,7 @@ Response:
 ```json
 {
   "session_id": "uuid",
+  "label": "brave-tiger-1234",
   "machine_id": "...",
   "connect_url": "wss://exec.catty.dev/connect",
   "connect_token": "base64url",
@@ -540,13 +555,13 @@ Response:
 ```
 
 ### `GET /v1/sessions`
-List sessions (in-memory, per API instance).
+List sessions for authenticated user (from PostgreSQL).
 
 ### `GET /v1/sessions/{id}`
-Get session details.
+Get session details. Accepts session ID (UUID) or label (e.g., "brave-tiger-1234").
 
 ### `POST /v1/sessions/{id}/stop`
-Stop and delete a session's machine.
+Stop a session's machine. Accepts session ID or label. Add `?delete=true` to also delete the machine.
 
 ### `POST /v1/sessions/stop-all`
 Stop all machines in the app (dangerous).
@@ -646,6 +661,21 @@ Custom domains configured:
 
 CLI default updated to use `api.catty.dev`. WebSocket URLs use `CATTY_EXEC_HOST` env var.
 
+### Persistent Storage (PostgreSQL) ✓
+Migrated from in-memory session storage to PostgreSQL:
+- **Users table**: id, email, workos_id, created_at
+- **Sessions table**: id, user_id, machine_id, label, connect_token, connect_url, region, created_at, ended_at, status
+- **Session labels**: Memorable labels (e.g., "brave-tiger-1734") for easy identification
+- **Environment**: `DATABASE_URL` secret (standard PostgreSQL connection string)
+
+### Session Reconnect (WIP)
+Partially implemented - DB and labels work, but reconnect has bugs:
+- **Done**: Sessions stored in PostgreSQL with memorable labels (e.g., "brave-tiger-1234")
+- **Done**: `catty list` shows label, status, region, created_at
+- **Done**: `catty new` displays label: "Session created: brave-tiger-1234"
+- **Done**: API looks up sessions by ID or label, validates ownership
+- **TODO**: Fix `catty connect <label>` - currently buggy, needs debugging
+
 ### Progress Indicators
 Add progress bars for long-running CLI operations (similar to Docker layer pushing):
 - **Workspace upload**: Show upload progress with bytes transferred / total, transfer rate
@@ -684,28 +714,19 @@ Setup:
 ### Usage Metering & Billing
 Track per-user token usage and implement billing:
 - **Token tracking**: Intercept/proxy Anthropic API calls to count tokens per user, or use Anthropic's usage API if available
-- **Database**: Supabase for users, sessions, and usage records
+- **Database**: PostgreSQL for users, sessions, and usage records
 - **Pricing model**: Free tier (e.g., X tokens/month) + flat subscription (~$25/mo for unlimited or higher cap)
 - **Goal**: Cheaper than running Claude Code locally with your own API key
 - **Billing integration**: Stripe for payment processing (simple checkout, no metered billing complexity initially)
 
 ### Multi-Key API Pool
 Handle load spikes by rotating through multiple Anthropic API keys:
-- Store keys in database (Supabase)
+- Store keys in database (PostgreSQL)
 - Round-robin or least-recently-used selection when spawning sessions
 - Key health tracking (rate limits, errors)
 - Admin interface to add/remove keys
 
-### Database Backend (Supabase)
-Replace in-memory session storage with persistent database:
-- **Users table**: id, email, workos_id, created_at, subscription_status
-- **Sessions table**: id, user_id, machine_id, created_at, ended_at, tokens_used
-- **API keys table**: id, key (encrypted), is_active, usage_count, last_used_at
-- **Usage table**: user_id, date, tokens_in, tokens_out
-
 ### Future Enhancements
-- Session resume (reconnect to existing session)
-- Download workspace changes back to local
 - Multiple concurrent sessions per user
 - Session timeout warnings
 - Linux/Windows CLI support

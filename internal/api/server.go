@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/izalutski/catty/internal/db"
 	"github.com/izalutski/catty/internal/fly"
 )
 
@@ -30,10 +31,10 @@ func NewServer(addr string) (*Server, error) {
 		return nil, fmt.Errorf("create fly client: %w", err)
 	}
 
-	// Initialize session store
-	store, err := NewSessionStore()
+	// Initialize database client
+	dbClient, err := db.NewClient()
 	if err != nil {
-		return nil, fmt.Errorf("create session store: %w", err)
+		return nil, fmt.Errorf("create database client: %w", err)
 	}
 
 	// Initialize auth handlers
@@ -43,7 +44,7 @@ func NewServer(addr string) (*Server, error) {
 	}
 
 	// Create handlers
-	handlers := NewHandlers(flyClient, store)
+	handlers := NewHandlers(flyClient, dbClient)
 
 	// Setup router
 	r := chi.NewRouter()
