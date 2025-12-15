@@ -9,8 +9,11 @@ import (
 
 const (
 	// DefaultAPIAddr is the default API server address
-	DefaultAPIAddr = "https://catty-api.fly.dev"
+	DefaultAPIAddr = "https://api.catty.dev"
 )
+
+// Version is set at build time via -ldflags
+var Version = "dev"
 
 var apiAddr string
 
@@ -29,6 +32,7 @@ func main() {
 	rootCmd.AddCommand(stopAllCmd)
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
+	rootCmd.AddCommand(versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

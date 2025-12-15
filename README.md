@@ -74,7 +74,7 @@ Maximum upload size: 100MB
 
 ## Roadmap
 
-- **Custom domain** - Move away from *.fly.dev URLs
+- ~~**Custom domain** - Move away from *.fly.dev URLs~~ ✓
 - **Usage metering & billing** - Track per-user token usage, free tier + subscription ($25/mo target)
 - **Multi-key support** - Pool of API keys for handling load spikes
 - **Database backend** - Persistent storage for users, sessions, and usage (Supabase)

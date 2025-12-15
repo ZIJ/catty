@@ -170,7 +170,12 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build connect URL
-	connectURL := fmt.Sprintf("wss://%s.fly.dev/connect", h.flyClient.AppName())
+	// Use custom domain if set, otherwise fall back to fly.dev
+	execHost := os.Getenv("CATTY_EXEC_HOST")
+	if execHost == "" {
+		execHost = fmt.Sprintf("%s.fly.dev", h.flyClient.AppName())
+	}
+	connectURL := fmt.Sprintf("wss://%s/connect", execHost)
 
 	// Save session
 	session := &Session{

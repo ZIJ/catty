@@ -65,7 +65,7 @@ catty new --api http://127.0.0.1:4815
 ```
 ┌─────────────┐     ┌─────────────────────┐     ┌──────────────────────┐
 │   catty     │────▶│     catty-api       │────▶│  Fly Machines API    │
-│   (CLI)     │     │ (catty-api.fly.dev) │     │   (internal)         │
+│   (CLI)     │     │  (api.catty.dev)    │     │   (internal)         │
 └──────┬──────┘     └─────────────────────┘     └──────────────────────┘
        │
        │ HTTP (upload) + WebSocket (terminal)
@@ -159,7 +159,7 @@ catty/
 **catty CLI:**
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CATTY_API_ADDR` | Override API URL | `https://catty-api.fly.dev` |
+| `CATTY_API_ADDR` | Override API URL | `https://api.catty.dev` |
 | `ANTHROPIC_API_KEY` | Passed to remote sessions | Required for Claude |
 
 **catty-api (hosted on Fly):**
@@ -168,6 +168,7 @@ catty/
 | `FLY_API_TOKEN` | Fly.io API token | Required (set as secret) |
 | `FLY_MACHINES_API_BASE` | Machines API URL | `http://_api.internal:4280` |
 | `CATTY_EXEC_APP` | Fly app name for executor | `catty-exec` |
+| `CATTY_EXEC_HOST` | Hostname for executor WebSocket connections | `exec.catty.dev` |
 | `CATTY_API_ADDR` | API listen address | `0.0.0.0:8080` |
 | `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required (set as secret) |
 | `WORKOS_CLIENT_ID` | WorkOS application client ID | Required (set as secret) |
@@ -517,7 +518,7 @@ Response:
 {
   "session_id": "uuid",
   "machine_id": "...",
-  "connect_url": "wss://catty-exec.fly.dev/connect",
+  "connect_url": "wss://exec.catty.dev/connect",
   "connect_token": "base64url",
   "headers": {
     "fly-force-instance-id": "..."
@@ -625,12 +626,12 @@ fly secrets list -a catty-api
 
 ## Roadmap
 
-### Custom Domain
-Move to own domain (e.g., `api.catty.sh`) so no Fly URLs are exposed to users:
-- Register domain
-- Configure Fly custom domains for both `catty-api` and `catty-exec`
-- Update CLI default API URL
-- Update WebSocket connect URLs returned by API
+### Custom Domain ✓
+Custom domains configured:
+- `api.catty.dev` - API server
+- `exec.catty.dev` - Executor WebSocket connections
+
+CLI default updated to use `api.catty.dev`. WebSocket URLs use `CATTY_EXEC_HOST` env var.
 
 ### Usage Metering & Billing
 Track per-user token usage and implement billing:

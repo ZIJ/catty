@@ -18,6 +18,7 @@ primary_region = "iad"
   # Use Fly's internal Machines API when running on Fly
   FLY_MACHINES_API_BASE = "http://_api.internal:4280"
   CATTY_EXEC_APP = "catty-exec"
+  CATTY_EXEC_HOST = "exec.catty.dev"
   CATTY_API_ADDR = "0.0.0.0:8080"
 
 [http_service]
