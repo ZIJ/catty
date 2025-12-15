@@ -1,6 +1,6 @@
 {
   "name": "@izalutski/catty",
-  "version": "0.2.8",
+  "version": "0.2.10",
   "description": "Run Claude Code sessions remotely",
   "keywords": [
     "ai",

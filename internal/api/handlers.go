@@ -94,6 +94,26 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check quota before creating session
+	allowed, _, err := h.db.CheckQuota(dbUser.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check quota: "+err.Error())
+		return
+	}
+	if !allowed {
+		// Return 402 with upgrade URL
+		apiHost := os.Getenv("CATTY_API_HOST")
+		if apiHost == "" {
+			apiHost = "api.catty.dev"
+		}
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{
+			"error":       "quota_exceeded",
+			"message":     "Free tier quota exceeded (1M tokens/month). Upgrade to Pro for unlimited usage.",
+			"upgrade_url": fmt.Sprintf("https://%s/v1/billing/checkout", apiHost),
+		})
+		return
+	}
+
 	// Generate connect token and label
 	connectToken, err := generateToken(32)
 	if err != nil {

@@ -43,6 +43,15 @@ func NewServer(addr string) (*Server, error) {
 		return nil, fmt.Errorf("create auth handlers: %w", err)
 	}
 
+	// Initialize billing handlers (optional - only if Stripe is configured)
+	var billingHandlers *BillingHandlers
+	if os.Getenv("STRIPE_SECRET_KEY") != "" {
+		billingHandlers, err = NewBillingHandlers(dbClient)
+		if err != nil {
+			return nil, fmt.Errorf("create billing handlers: %w", err)
+		}
+	}
+
 	// Create handlers
 	handlers := NewHandlers(flyClient, dbClient)
 
@@ -60,6 +69,19 @@ func NewServer(addr string) (*Server, error) {
 		r.Post("/auth/device", authHandlers.StartDeviceAuth)
 		r.Post("/auth/device/token", authHandlers.PollDeviceToken)
 
+		// Billing endpoints (if configured)
+		if billingHandlers != nil {
+			// Webhook is public (verified by signature)
+			r.Post("/billing/webhook", billingHandlers.HandleStripeWebhook)
+
+			// Checkout requires auth - supports both GET (redirect) and POST (JSON)
+			r.Group(func(r chi.Router) {
+				r.Use(authHandlers.AuthMiddleware)
+				r.Get("/billing/checkout", billingHandlers.CreateCheckoutSession)
+				r.Post("/billing/checkout", billingHandlers.CreateCheckoutSession)
+			})
+		}
+
 		// Protected session endpoints
 		r.Group(func(r chi.Router) {
 			r.Use(authHandlers.AuthMiddleware)
@@ -69,6 +91,12 @@ func NewServer(addr string) (*Server, error) {
 			r.Post("/sessions/{session_id}/stop", handlers.StopSession)
 		})
 	})
+
+	// Billing success/cancel pages (public, outside /v1)
+	if billingHandlers != nil {
+		r.Get("/billing/success", billingHandlers.BillingSuccess)
+		r.Get("/billing/cancel", billingHandlers.BillingCancel)
+	}
 
 	// Health check
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

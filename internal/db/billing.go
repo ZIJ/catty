@@ -178,6 +178,72 @@ func (c *Client) CheckQuota(userID string) (bool, int64, error) {
 	return true, remaining, nil
 }
 
+// SetStripeCustomerID sets the Stripe customer ID for a user's subscription.
+func (c *Client) SetStripeCustomerID(userID, customerID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := c.pool.Exec(ctx,
+		`UPDATE subscriptions SET stripe_customer_id = $1, updated_at = NOW() WHERE user_id = $2`,
+		customerID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set stripe customer id: %w", err)
+	}
+
+	return nil
+}
+
+// GetUserByStripeCustomerID finds a user ID by their Stripe customer ID.
+func (c *Client) GetUserByStripeCustomerID(customerID string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var userID string
+	err := c.pool.QueryRow(ctx,
+		`SELECT user_id FROM subscriptions WHERE stripe_customer_id = $1`,
+		customerID,
+	).Scan(&userID)
+
+	if err != nil {
+		return "", fmt.Errorf("user not found for stripe customer: %w", err)
+	}
+
+	return userID, nil
+}
+
+// UpdateSubscriptionPlan updates only the plan field.
+func (c *Client) UpdateSubscriptionPlan(userID, plan string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := c.pool.Exec(ctx,
+		`UPDATE subscriptions SET plan = $1, updated_at = NOW() WHERE user_id = $2`,
+		plan, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update subscription plan: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateSubscriptionPeriod updates the billing period dates.
+func (c *Client) UpdateSubscriptionPeriod(userID string, periodStart, periodEnd time.Time) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := c.pool.Exec(ctx,
+		`UPDATE subscriptions SET current_period_start = $1, current_period_end = $2, updated_at = NOW() WHERE user_id = $3`,
+		periodStart, periodEnd, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update subscription period: %w", err)
+	}
+
+	return nil
+}
+
 // GetSessionByConnectToken gets a session by its connect token.
 func (c *Client) GetSessionByConnectToken(token string) (*Session, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

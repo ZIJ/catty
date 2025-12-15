@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/coder/websocket"
@@ -40,6 +42,10 @@ func Run(opts *RunOptions) error {
 		TTLSec:   opts.TTLSec,
 	})
 	if err != nil {
+		// Check for quota exceeded error
+		if apiErr, ok := err.(*APIError); ok && apiErr.IsQuotaExceeded() {
+			return handleQuotaExceeded(apiErr, client)
+		}
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
@@ -191,4 +197,43 @@ func sendPong(conn *websocket.Conn) {
 	msg := protocol.NewPongMessage()
 	data, _ := json.Marshal(msg)
 	conn.Write(context.Background(), websocket.MessageText, data)
+}
+
+// handleQuotaExceeded displays a friendly message and opens the upgrade page.
+func handleQuotaExceeded(apiErr *APIError, client *APIClient) error {
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Fprintln(os.Stderr, "  Free tier quota exceeded (1M tokens/month)")
+	fmt.Fprintln(os.Stderr, "  Upgrade to Pro for unlimited usage.")
+	fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Fprintln(os.Stderr, "")
+
+	// Call the checkout endpoint to get a Stripe checkout URL
+	checkoutURL, err := client.CreateCheckoutSession()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create checkout session: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Please visit https://catty.dev to upgrade.")
+		return fmt.Errorf("quota exceeded")
+	}
+
+	fmt.Fprintln(os.Stderr, "Opening upgrade page in your browser...")
+	openBrowser(checkoutURL)
+
+	return fmt.Errorf("quota exceeded")
+}
+
+// openBrowser opens the specified URL in the default browser.
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return fmt.Errorf("unsupported platform")
+	}
+	return cmd.Start()
 }

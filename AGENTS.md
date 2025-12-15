@@ -39,8 +39,15 @@ The following is implemented and working:
 - Per-user quota checking before forwarding requests
 - Usage records stored in PostgreSQL (`usage` table)
 
+**Stripe Billing: COMPLETE**
+- Stripe Checkout integration for upgrading to Pro subscription
+- Webhook handling for subscription lifecycle events
+- CLI displays friendly paywall message and opens browser to checkout
+- Success/cancel pages served by API after checkout
+
 **Next Up:**
-- Stripe integration for billing (subscriptions, payment)
+- Session reconnect debugging
+- Progress indicators for uploads
 
 ---
 
@@ -184,9 +191,11 @@ catty/
 │   ├── api/                    # API server logic
 │   │   ├── server.go           # HTTP server setup and routing
 │   │   ├── handlers.go         # Session CRUD handlers
-│   │   └── auth.go             # WorkOS authentication
+│   │   ├── auth.go             # WorkOS authentication
+│   │   └── billing.go          # Stripe checkout/webhook handlers
 │   ├── db/                     # Database layer
 │   │   ├── postgres.go         # PostgreSQL client (pgx)
+│   │   ├── billing.go          # Stripe customer ID helpers
 │   │   └── labels.go           # Memorable label generation
 │   ├── cli/                    # CLI logic
 │   │   ├── client.go           # API client with auth
@@ -245,11 +254,15 @@ catty/
 | `CATTY_EXEC_APP` | Fly app name for executor | `catty-exec` |
 | `CATTY_EXEC_HOST` | Hostname for executor WebSocket connections | `exec.catty.dev` |
 | `CATTY_API_ADDR` | API listen address | `0.0.0.0:8080` |
+| `CATTY_API_HOST` | API hostname for redirect URLs | `api.catty.dev` |
 | `CATTY_PROXY_HOST` | Hostname of the billing proxy | `proxy.catty.dev` |
 | `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required (set as secret) |
 | `WORKOS_CLIENT_ID` | WorkOS application client ID | Required (set as secret) |
 | `WORKOS_API_KEY` | WorkOS API key | Required (set as secret) |
 | `DATABASE_URL` | PostgreSQL connection string | Required (set as secret) |
+| `STRIPE_SECRET_KEY` | Stripe API secret key | Required for billing |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret | Required for billing |
+| `STRIPE_PRICE_ID` | Stripe Price ID for Pro subscription | Required for billing |
 
 **catty-proxy (hosted on Fly):**
 | Variable | Description | Default |
@@ -463,6 +476,116 @@ Look for:
 - `"received request"` - Incoming request with label and path
 - `"proxying request"` - Request being forwarded (includes remaining quota)
 - `"recorded usage"` - Usage successfully written to database
+
+---
+
+## Stripe Billing
+
+The API integrates with Stripe to handle subscription billing for Pro users.
+
+### User Flow
+
+1. User runs `catty new` and quota is exceeded
+2. API returns HTTP 402 with `{"error":"quota_exceeded","upgrade_url":"..."}`
+3. CLI detects 402, calls `/v1/billing/checkout` to get Stripe Checkout URL
+4. CLI opens browser to Stripe Checkout
+5. User completes payment on Stripe's hosted page
+6. Stripe sends webhook to API (`customer.subscription.created`)
+7. API updates user's plan to "pro" in database
+8. User runs `catty new` again - session creates successfully
+
+### API Endpoints
+
+**`POST /v1/billing/checkout`** (requires auth)
+- Creates a Stripe Checkout session for the authenticated user
+- Gets or creates a Stripe customer ID for the user
+- Returns `{"checkout_url": "https://checkout.stripe.com/..."}`
+- Also supports `GET` for direct browser redirect
+
+**`POST /v1/billing/webhook`** (public, verified by signature)
+- Handles Stripe webhook events
+- Events processed:
+  - `checkout.session.completed` - Upgrades user to pro
+  - `customer.subscription.created` - Upgrades user to pro (backup for checkout)
+  - `customer.subscription.deleted` - Downgrades user to free
+  - `customer.subscription.updated` - Updates subscription period dates
+
+**`GET /billing/success`** (public)
+- HTML success page shown after successful checkout
+- Instructs user to return to terminal
+
+**`GET /billing/cancel`** (public)
+- HTML cancel page shown when user cancels checkout
+- Confirms no charges were made
+
+### Webhook Signature Verification
+
+Stripe webhooks are verified using the signing secret:
+
+```go
+event, err := webhook.ConstructEventWithOptions(payload, sigHeader, h.webhookSecret, webhook.ConstructEventOptions{
+    IgnoreAPIVersionMismatch: true,  // Important: SDK may differ from webhook API version
+})
+```
+
+**Note:** `IgnoreAPIVersionMismatch: true` is required because Stripe webhooks may use a different API version than the Go SDK expects.
+
+### Database Schema
+
+```sql
+-- Subscriptions table (extended for Stripe)
+CREATE TABLE subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    plan VARCHAR(50) NOT NULL DEFAULT 'free',           -- 'free' or 'pro'
+    stripe_customer_id VARCHAR(255),                     -- cus_xxxxx
+    stripe_subscription_id VARCHAR(255),                 -- sub_xxxxx
+    current_period_start TIMESTAMP,
+    current_period_end TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Key Implementation Files
+
+- `internal/api/billing.go` - Checkout session creation, webhook handling, HTML pages
+- `internal/api/handlers.go` - Quota check before session creation (returns 402)
+- `internal/db/billing.go` - Stripe customer ID helpers (`SetStripeCustomerID`, `GetUserByStripeCustomerID`)
+- `internal/cli/client.go` - `APIError` type with `IsQuotaExceeded()`, `CreateCheckoutSession()` method
+- `internal/cli/run.go` - `handleQuotaExceeded()` function, opens browser to checkout
+
+### CLI Quota Exceeded Handling
+
+When the API returns 402, the CLI:
+1. Displays a friendly ASCII box message about quota exceeded
+2. Calls the checkout endpoint to get a Stripe Checkout URL
+3. Opens the URL in the default browser
+4. Returns an error so the user knows to retry after payment
+
+```go
+func handleQuotaExceeded(apiErr *APIError, client *APIClient) error {
+    fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    fmt.Fprintln(os.Stderr, "  Free tier quota exceeded (1M tokens/month)")
+    fmt.Fprintln(os.Stderr, "  Upgrade to Pro for unlimited usage.")
+    fmt.Fprintln(os.Stderr, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    checkoutURL, err := client.CreateCheckoutSession()
+    // ... open browser to checkoutURL
+}
+```
+
+### Stripe Setup
+
+1. Create a Stripe account and product with monthly price
+2. Create a webhook endpoint pointing to `https://api.catty.dev/v1/billing/webhook`
+3. Select events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.deleted`, `customer.subscription.updated`
+4. Set secrets on Fly:
+   ```bash
+   fly secrets set STRIPE_SECRET_KEY=sk_live_... -a catty-api
+   fly secrets set STRIPE_WEBHOOK_SECRET=whsec_... -a catty-api
+   fly secrets set STRIPE_PRICE_ID=price_... -a catty-api
+   ```
 
 ---
 
@@ -930,13 +1053,14 @@ Token counting is complete:
 - **Database**: Usage records stored in PostgreSQL with user_id, session_id, input_tokens, output_tokens
 - **Quota checking**: `CheckQuota()` called before each request, returns 402 if exceeded
 
-### Billing (Stripe Integration)
-Next step - connect usage tracking to payments:
-- **Stripe Checkout**: Simple subscription checkout for pro tier
-- **Pricing model**: Free tier (e.g., 100K tokens/month) + flat subscription (~$25/mo for unlimited)
-- **Webhook handling**: Listen for subscription events to update user tier
-- **User tier storage**: Add `tier` and `stripe_customer_id` fields to users table
-- **Goal**: Cheaper than running Claude Code locally with your own API key
+### Billing (Stripe Integration) ✓
+Stripe billing is complete:
+- **Stripe Checkout**: Redirects users to Stripe-hosted checkout page for Pro subscription
+- **Pricing model**: Free tier (1M tokens/month) + Pro subscription for unlimited
+- **Webhook handling**: Handles `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.deleted`, `customer.subscription.updated` events
+- **User tier storage**: `plan` field in subscriptions table, `stripe_customer_id` for linking
+- **CLI integration**: Friendly paywall message with browser redirect to checkout
+- **Success/cancel pages**: API serves HTML pages for post-checkout redirect
 
 ### Multi-Key API Pool
 Handle load spikes by rotating through multiple Anthropic API keys:
@@ -995,4 +1119,5 @@ github.com/coder/websocket v1.8.12     # WebSocket
 github.com/creack/pty v1.1.21          # PTY handling
 golang.org/x/term v0.25.0              # Terminal raw mode
 github.com/google/uuid v1.6.0          # UUID generation
+github.com/stripe/stripe-go/v76        # Stripe API client
 ```

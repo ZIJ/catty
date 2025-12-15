@@ -172,7 +172,70 @@ func (c *APIClient) StopSession(sessionID string, delete bool) error {
 	return nil
 }
 
+// APIError represents an error response from the API.
+type APIError struct {
+	StatusCode int
+	ErrorCode  string
+	Message    string
+	UpgradeURL string
+}
+
+func (e *APIError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.ErrorCode)
+}
+
+// IsQuotaExceeded returns true if this is a quota exceeded error.
+func (e *APIError) IsQuotaExceeded() bool {
+	return e.StatusCode == http.StatusPaymentRequired && e.ErrorCode == "quota_exceeded"
+}
+
+// CreateCheckoutSession creates a Stripe checkout session and returns the URL.
+func (c *APIClient) CreateCheckoutSession() (string, error) {
+	resp, err := c.doRequest("POST", c.baseURL+"/v1/billing/checkout", nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("checkout failed: %s", string(body))
+	}
+
+	var result struct {
+		CheckoutURL string `json:"checkout_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.CheckoutURL, nil
+}
+
 func readError(resp *http.Response) error {
 	body, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+
+	// Try to parse as structured error
+	var errResp struct {
+		Error      string `json:"error"`
+		Message    string `json:"message"`
+		UpgradeURL string `json:"upgrade_url"`
+	}
+	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error != "" {
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			ErrorCode:  errResp.Error,
+			Message:    errResp.Message,
+			UpgradeURL: errResp.UpgradeURL,
+		}
+	}
+
+	// Fall back to generic error
+	return &APIError{
+		StatusCode: resp.StatusCode,
+		Message:    string(body),
+	}
 }

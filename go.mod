@@ -8,6 +8,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/spf13/cobra v1.10.2
+	github.com/stripe/stripe-go/v76 v76.25.0
 	golang.org/x/term v0.38.0
 )
 
