@@ -39,6 +39,7 @@ catty new --agent codex      # Use Codex instead (experimental, not pre-installe
 catty new --no-upload        # Don't upload current directory
 catty list                   # List active sessions
 catty stop <session-id>      # Stop a session
+catty version                # Print version number
 ```
 
 ### For Development (Local API)
@@ -107,7 +108,8 @@ catty/
 │   │   ├── stop.go             # 'stop' command - stop session
 │   │   ├── stopall.go          # 'stop-all-sessions-dangerously'
 │   │   ├── login.go            # 'login' command - authenticate
-│   │   └── logout.go           # 'logout' command - remove credentials
+│   │   ├── logout.go           # 'logout' command - remove credentials
+│   │   └── version.go          # 'version' command - print version
 │   ├── catty-api/              # API server binary (deployed to Fly)
 │   │   └── main.go
 │   └── catty-exec-runtime/     # Executor (runs in Fly Machine)
@@ -160,7 +162,6 @@ catty/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CATTY_API_ADDR` | Override API URL | `https://api.catty.dev` |
-| `ANTHROPIC_API_KEY` | Passed to remote sessions | Required for Claude |
 
 **catty-api (hosted on Fly):**
 | Variable | Description | Default |
@@ -275,7 +276,7 @@ Plus all patterns from `.gitignore` if present.
 
 Use `--no-upload` to skip workspace upload:
 ```bash
-./bin/catty new --no-upload
+catty new --no-upload
 ```
 
 ---
@@ -427,7 +428,7 @@ npm run release:major    # major release
 
 This automatically:
 1. Bumps version in `package.json`
-2. Builds macOS binaries via `make release`
+2. Builds macOS binaries via `make release VERSION=x.x.x` (injects version into binary)
 3. Creates GitHub release with binaries
 4. Publishes to npm
 
@@ -443,7 +444,7 @@ cd ..
 make release
 
 # 3. Create GitHub release
-gh release create v0.2.4 dist/* --title "v0.2.4" --notes "Release notes"
+gh release create v0.x.x dist/* --title "v0.x.x" --notes "Release notes"
 
 # 4. Publish to npm
 cd npm

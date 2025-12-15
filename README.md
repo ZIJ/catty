@@ -36,6 +36,7 @@ catty new                    # Start Claude Code session (uploads current direct
 catty new --no-upload        # Start without uploading workspace
 catty list                   # List active sessions
 catty stop <session-id>      # Stop a session
+catty version                # Print version number
 ```
 
 ## Requirements
