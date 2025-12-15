@@ -13,6 +13,7 @@ The following is implemented and working:
 - Claude Code integration with automatic API key approval
 - WebSocket-based PTY streaming with local terminal feel
 - **Workspace sync**: Automatically uploads current directory to remote session
+- **User authentication**: WorkOS-based login via device flow
 
 ---
 
@@ -31,8 +32,10 @@ npx @izalutski/catty new
 ### Usage
 
 ```bash
+catty login                  # Authenticate (required once)
+catty logout                 # Remove stored credentials
 catty new                    # Start Claude Code, uploads current directory
-catty new --agent codex      # Use Codex instead
+catty new --agent codex      # Use Codex instead (experimental, not pre-installed)
 catty new --no-upload        # Don't upload current directory
 catty list                   # List active sessions
 catty stop <session-id>      # Stop a session
@@ -45,6 +48,8 @@ If running the API locally:
 # Terminal 1 - Start local API server
 export FLY_API_TOKEN=...
 export ANTHROPIC_API_KEY=...
+export WORKOS_CLIENT_ID=client_...
+export WORKOS_API_KEY=sk_...
 ./bin/catty-api
 
 # Terminal 2 - Use local API
@@ -76,16 +81,17 @@ catty new --api http://127.0.0.1:4815
 
 ### Data Flow
 
-1. `catty new` calls hosted API (`POST /v1/sessions` on catty-api.fly.dev)
-2. API creates Fly Machine with connect token and command
-3. API returns connection details to CLI
-4. CLI zips current directory (respecting .gitignore) and uploads to executor via HTTP
-5. Executor extracts zip to `/workspace` directory
-6. CLI connects directly to machine via WebSocket with:
+1. User runs `catty login` (one-time) → authenticates via WorkOS → token stored locally
+2. `catty new` calls hosted API with auth token (`POST /v1/sessions`)
+3. API validates token, creates Fly Machine with connect token and command
+4. API returns connection details to CLI
+5. CLI zips current directory (respecting .gitignore) and uploads to executor via HTTP
+6. Executor extracts zip to `/workspace` directory
+7. CLI connects directly to machine via WebSocket with:
    - `fly-force-instance-id: <machine_id>` header
    - `Authorization: Bearer <connect_token>` header
-7. Executor validates token, spawns PTY in `/workspace`, relays bytes bidirectionally
-8. CLI enters raw terminal mode, streams stdin/stdout
+8. Executor validates token, spawns PTY in `/workspace`, relays bytes bidirectionally
+9. CLI enters raw terminal mode, streams stdin/stdout
 
 ---
 
@@ -108,10 +114,12 @@ catty/
 │       └── main.go
 ├── internal/
 │   ├── api/                    # API server logic
-│   │   ├── server.go
-│   │   ├── handlers.go
+│   │   ├── server.go           # HTTP server setup and routing
+│   │   ├── handlers.go         # Session CRUD handlers
+│   │   ├── sessions.go         # In-memory session store
 │   │   └── auth.go             # WorkOS authentication
 │   ├── cli/                    # CLI logic
+│   │   ├── client.go           # API client with auth
 │   │   ├── run.go              # Session connection logic
 │   │   ├── terminal.go         # Raw terminal handling
 │   │   ├── workspace.go        # Workspace zip creation and upload
@@ -129,7 +137,9 @@ catty/
 │   └── claude-wrapper.sh       # Pre-approves API key before launching claude
 ├── npm/                        # npm package for CLI distribution
 │   ├── package.json
-│   ├── scripts/install.js      # Downloads platform-specific binary
+│   ├── scripts/
+│   │   ├── install.js          # Downloads platform-specific binary (postinstall)
+│   │   └── release.js          # Automated release script
 │   └── README.md
 ├── Dockerfile                  # For catty-exec-runtime
 ├── Dockerfile.api              # For catty-api
@@ -402,47 +412,57 @@ The API automatically fetches the current deployed image from existing machines.
 
 The CLI is distributed via npm for easy installation.
 
-### Building Releases
+### Releasing (Automated)
 
-```bash
-# Build binaries for all platforms
-make release
-
-# This creates:
-# dist/catty-darwin-amd64
-# dist/catty-darwin-arm64
-# dist/catty-linux-amd64
-# dist/catty-linux-arm64
-# dist/catty-windows-amd64.exe
-# dist/catty-windows-arm64.exe
-```
-
-### Creating a GitHub Release
-
-1. Tag the release:
-   ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
-   ```
-
-2. Upload binaries to GitHub release (manually or via CI)
-
-3. Update version in `npm/package.json` and `npm/scripts/install.js`
-
-### Publishing to npm
+Use the release script from the `npm` directory:
 
 ```bash
 cd npm
-npm publish
+npm run release          # patch release (default)
+npm run release:patch    # patch release
+npm run release:minor    # minor release
+npm run release:major    # major release
+```
+
+This automatically:
+1. Bumps version in `package.json`
+2. Builds macOS binaries via `make release`
+3. Creates GitHub release with binaries
+4. Publishes to npm
+
+### Manual Release
+
+```bash
+# 1. Bump version
+cd npm
+npm version patch
+
+# 2. Build binaries
+cd ..
+make release
+
+# 3. Create GitHub release
+gh release create v0.2.4 dist/* --title "v0.2.4" --notes "Release notes"
+
+# 4. Publish to npm
+cd npm
+npm publish --access public
 ```
 
 ### How It Works
 
 The npm package uses a postinstall script (`scripts/install.js`) that:
-1. Detects the user's platform (darwin/linux/windows) and architecture (amd64/arm64)
-2. Downloads the matching binary from GitHub releases
-3. Places it in `node_modules/catty-cli/bin/catty`
-4. The `bin` field in `package.json` creates the `catty` command
+1. Reads the version from `package.json`
+2. Detects the user's platform (darwin) and architecture (amd64/arm64)
+3. Downloads the matching binary from GitHub releases
+4. Places it in `node_modules/@izalutski/catty/bin/catty`
+5. The `bin` field in `package.json` creates the `catty` command
+
+### Currently Supported Platforms
+
+- macOS (darwin) - amd64, arm64
+
+Linux and Windows support can be added by updating the `Makefile` release target.
 
 ---
 
@@ -506,7 +526,7 @@ Response:
 ```
 
 ### `GET /v1/sessions`
-List sessions from local storage.
+List sessions (in-memory, per API instance).
 
 ### `GET /v1/sessions/{id}`
 Get session details.
@@ -585,20 +605,37 @@ If the upload says successful but Claude doesn't see files:
 ### Connection drops after ~60s idle
 Keepalive ping/pong should prevent this. Check that ping messages are being sent every 25 seconds.
 
+### "Not logged in" error
+Run `catty login` to authenticate. Credentials are stored in `~/.catty/credentials.json`.
+
+### "missing authorization header" error
+The CLI isn't sending the auth token. Check that:
+1. You're logged in: `catty login`
+2. Credentials file exists: `cat ~/.catty/credentials.json`
+3. You're using the latest CLI version (npm may have cached an old binary)
+
+### Login fails with WorkOS error
+Check that WorkOS secrets are set on the API:
+```bash
+fly secrets list -a catty-api
+# Should show WORKOS_CLIENT_ID and WORKOS_API_KEY
+```
+
 ---
 
 ## Future Milestones
 
-### Milestone 2: Multi-tenancy
-- Add user authentication
-- Add quotas and billing
-- Replace capability tokens with signed JWTs
+### Milestone 2: Billing & Quotas
+- Add usage tracking per user
+- Implement billing via Stripe
+- Add session time limits and quotas
 
 ### Milestone 3: Enhanced Features
 - Session resume (reconnect to existing session)
 - Download workspace changes back to local
 - Multiple concurrent sessions per user
 - Session timeout warnings
+- Linux/Windows CLI support
 
 ---
 
@@ -617,13 +654,6 @@ Key fields in `~/.claude.json`:
 - `lastOnboardingVersion` - Version that completed onboarding
 - `projects` - Per-directory settings including `hasTrustDialogAccepted`
 - `customApiKeyResponses.approved` - Array of approved API key suffixes (last 20 chars)
-
-### API Key Approval Mechanism
-
-Claude Code tracks approved API keys by their suffix (last 20 characters). The wrapper script:
-1. Extracts the suffix: `echo "$ANTHROPIC_API_KEY" | tail -c 21`
-2. Adds it to `customApiKeyResponses.approved` array using `jq`
-3. This bypasses the "Do you want to use this API key?" prompt
 
 ### Fly Machine Routing
 

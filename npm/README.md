@@ -16,6 +16,13 @@ npx @izalutski/catty new
 
 ## Usage
 
+### First-time setup
+
+```bash
+# Log in (required once)
+catty login
+```
+
 ### Start a new Claude Code session
 
 ```bash
@@ -27,9 +34,11 @@ This will:
 2. Start Claude Code in the remote environment
 3. Connect you to an interactive terminal session
 
-### Options
+### Commands
 
 ```bash
+catty login                  # Authenticate (required before first use)
+catty logout                 # Remove stored credentials
 catty new                    # Start Claude Code (default)
 catty new --no-upload        # Don't upload current directory
 catty list                   # List active sessions
@@ -39,7 +48,6 @@ catty stop <session-id>      # Stop a session
 ## Requirements
 
 - Node.js 16+
-- An Anthropic API key (set as `ANTHROPIC_API_KEY` environment variable)
 
 ## How it works
 
