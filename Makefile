@@ -20,12 +20,6 @@ release:
 	# macOS
 	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o dist/catty-darwin-amd64 ./cmd/catty
 	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o dist/catty-darwin-arm64 ./cmd/catty
-	# Linux
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/catty-linux-amd64 ./cmd/catty
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o dist/catty-linux-arm64 ./cmd/catty
-	# Windows
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o dist/catty-windows-amd64.exe ./cmd/catty
-	GOOS=windows GOARCH=arm64 go build $(LDFLAGS) -o dist/catty-windows-arm64.exe ./cmd/catty
 
 # Deploy API to Fly
 deploy-api:

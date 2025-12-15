@@ -5,7 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const VERSION = process.env.CATTY_VERSION || '0.1.0';
+const packageJson = require('../package.json');
+const VERSION = process.env.CATTY_VERSION || packageJson.version;
 const GITHUB_REPO = 'ZIJ/catty';
 
 function getPlatform() {

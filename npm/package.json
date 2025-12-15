@@ -1,6 +1,6 @@
 {
   "name": "@izalutski/catty",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Run Claude Code sessions remotely",
   "keywords": [
     "ai",
@@ -20,7 +20,11 @@
     "catty": "./bin/catty"
   },
   "scripts": {
-    "postinstall": "node scripts/install.js"
+    "postinstall": "node scripts/install.js",
+    "release": "node scripts/release.js patch",
+    "release:patch": "node scripts/release.js patch",
+    "release:minor": "node scripts/release.js minor",
+    "release:major": "node scripts/release.js major"
   },
   "files": [
     "scripts"
