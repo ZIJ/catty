@@ -72,6 +72,13 @@ Maximum upload size: 100MB
 
 **Files not appearing**: Check that your workspace is under 100MB and files aren't gitignored.
 
+## Roadmap
+
+- **Custom domain** - Move away from *.fly.dev URLs
+- **Usage metering & billing** - Track per-user token usage, free tier + subscription ($25/mo target)
+- **Multi-key support** - Pool of API keys for handling load spikes
+- **Database backend** - Persistent storage for users, sessions, and usage (Supabase)
+
 ## Development
 
 See [AGENTS.md](AGENTS.md) for architecture details, deployment instructions, and contribution guidelines.

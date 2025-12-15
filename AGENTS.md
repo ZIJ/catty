@@ -623,14 +623,38 @@ fly secrets list -a catty-api
 
 ---
 
-## Future Milestones
+## Roadmap
 
-### Milestone 2: Billing & Quotas
-- Add usage tracking per user
-- Implement billing via Stripe
-- Add session time limits and quotas
+### Custom Domain
+Move to own domain (e.g., `api.catty.sh`) so no Fly URLs are exposed to users:
+- Register domain
+- Configure Fly custom domains for both `catty-api` and `catty-exec`
+- Update CLI default API URL
+- Update WebSocket connect URLs returned by API
 
-### Milestone 3: Enhanced Features
+### Usage Metering & Billing
+Track per-user token usage and implement billing:
+- **Token tracking**: Intercept/proxy Anthropic API calls to count tokens per user, or use Anthropic's usage API if available
+- **Database**: Supabase for users, sessions, and usage records
+- **Pricing model**: Free tier (e.g., X tokens/month) + flat subscription (~$25/mo for unlimited or higher cap)
+- **Goal**: Cheaper than running Claude Code locally with your own API key
+- **Billing integration**: Stripe for payment processing (simple checkout, no metered billing complexity initially)
+
+### Multi-Key API Pool
+Handle load spikes by rotating through multiple Anthropic API keys:
+- Store keys in database (Supabase)
+- Round-robin or least-recently-used selection when spawning sessions
+- Key health tracking (rate limits, errors)
+- Admin interface to add/remove keys
+
+### Database Backend (Supabase)
+Replace in-memory session storage with persistent database:
+- **Users table**: id, email, workos_id, created_at, subscription_status
+- **Sessions table**: id, user_id, machine_id, created_at, ended_at, tokens_used
+- **API keys table**: id, key (encrypted), is_active, usage_count, last_used_at
+- **Usage table**: user_id, date, tokens_in, tokens_out
+
+### Future Enhancements
 - Session resume (reconnect to existing session)
 - Download workspace changes back to local
 - Multiple concurrent sessions per user
