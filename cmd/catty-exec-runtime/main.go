@@ -30,8 +30,8 @@ func main() {
 	httpServer := &http.Server{
 		Addr:         addr,
 		Handler:      server.Handler(),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 0, // No timeout for WebSocket
+		ReadTimeout:  5 * time.Minute, // Allow large uploads (up to 100MB)
+		WriteTimeout: 0,               // No timeout for WebSocket
 		IdleTimeout:  120 * time.Second,
 	}
 

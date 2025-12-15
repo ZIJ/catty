@@ -76,6 +76,8 @@ Maximum upload size: 100MB
 ## Roadmap
 
 - ~~**Custom domain** - Move away from *.fly.dev URLs~~ ✓
+- **Progress indicators** - Progress bars for uploads and other long operations
+- **Workspace sync-back** - Stream file changes from remote session back to local
 - **Documentation site** - Comprehensive docs with Mintlify
 - **Usage metering & billing** - Track per-user token usage, free tier + subscription ($25/mo target)
 - **Multi-key support** - Pool of API keys for handling load spikes

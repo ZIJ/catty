@@ -2,6 +2,14 @@
 
 Runs Claude Code sessions remotely, streaming PTY to the user so it feels like working with a local agent.
 
+## Instructions for AI Agents
+
+When instructed to "add a task" or "add to roadmap":
+1. Add a brief bullet point to the **Roadmap** section in `README.md`
+2. Add a more detailed subsection under **Roadmap** in this file (`AGENTS.md`) with implementation notes
+
+---
+
 ## Project Status
 
 **Milestone 1: COMPLETE**
@@ -633,6 +641,25 @@ Custom domains configured:
 - `exec.catty.dev` - Executor WebSocket connections
 
 CLI default updated to use `api.catty.dev`. WebSocket URLs use `CATTY_EXEC_HOST` env var.
+
+### Progress Indicators
+Add progress bars for long-running CLI operations (similar to Docker layer pushing):
+- **Workspace upload**: Show upload progress with bytes transferred / total, transfer rate
+- **Session creation**: Show spinner or status updates while waiting for machine to start
+- **Implementation**: Consider using a library like `github.com/schollz/progressbar/v3` or `github.com/vbauerster/mpb`
+- Keep output clean - progress should update in place, not spam terminal
+
+### Workspace Sync-Back
+Stream file changes from the remote executor back to the local machine in real-time:
+- **File watching**: Use `fsnotify` or similar in executor to watch `/workspace` for changes
+- **Change protocol**: Send file change events over WebSocket (new text message type)
+  - `{"type":"file_change","path":"src/main.go","action":"write","content":"base64..."}`
+  - `{"type":"file_change","path":"old.txt","action":"delete"}`
+- **CLI handling**: Apply changes to local directory as they arrive
+- **Conflict handling**: Decide policy - overwrite local, prompt user, or skip
+- **Security**: Validate paths to prevent directory traversal attacks
+- **Performance**: Debounce rapid changes, batch small updates, skip large binary files
+- **Optional**: Make sync-back opt-in via `--sync` flag to avoid unexpected local changes
 
 ### Documentation Site (Mintlify)
 Create comprehensive documentation hosted on Mintlify (e.g., `docs.catty.dev`):
