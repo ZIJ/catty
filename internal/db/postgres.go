@@ -154,6 +154,27 @@ func (c *Client) GetSessionByLabel(userID, label string) (*Session, error) {
 	return &session, nil
 }
 
+// GetSessionByLabelAnyUser gets a session by its label (without user restriction).
+// Used by the proxy to look up sessions for metering.
+func (c *Client) GetSessionByLabelAnyUser(label string) (*Session, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var session Session
+	err := c.pool.QueryRow(ctx,
+		`SELECT id, user_id, machine_id, label, connect_token, connect_url, region, status, created_at, ended_at
+		 FROM sessions WHERE label = $1`,
+		label,
+	).Scan(&session.ID, &session.UserID, &session.MachineID, &session.Label, &session.ConnectToken,
+		&session.ConnectURL, &session.Region, &session.Status, &session.CreatedAt, &session.EndedAt)
+
+	if err != nil {
+		return nil, fmt.Errorf("session not found: %w", err)
+	}
+
+	return &session, nil
+}
+
 // GetSessionByID gets a session by its ID.
 func (c *Client) GetSessionByID(id string) (*Session, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

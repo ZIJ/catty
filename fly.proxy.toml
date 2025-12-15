@@ -1,0 +1,26 @@
+# Fly.io configuration for catty-proxy (Anthropic API proxy with metering)
+app = "catty-proxy"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.proxy"
+
+[env]
+  CATTY_PROXY_ADDR = "0.0.0.0:8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

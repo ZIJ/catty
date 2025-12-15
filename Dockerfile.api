@@ -1,4 +1,4 @@
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -12,12 +12,10 @@ COPY . .
 # Build
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /catty-api ./cmd/catty-api
 
-# Runtime image - minimal for API server
-FROM debian:bookworm-slim
+# Runtime image - minimal Alpine for API server
+FROM alpine:3.21
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /catty-api /usr/local/bin/
 

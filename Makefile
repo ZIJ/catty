@@ -1,10 +1,10 @@
-.PHONY: build build-cli build-api release clean
+.PHONY: build build-cli build-api build-proxy release clean
 
 VERSION ?= 0.1.0
 LDFLAGS := -ldflags="-s -w -X main.Version=$(VERSION)"
 
 # Build all binaries
-build: build-cli build-api
+build: build-cli build-api build-proxy
 
 # Build CLI for current platform
 build-cli:
@@ -13,6 +13,10 @@ build-cli:
 # Build API for current platform
 build-api:
 	go build $(LDFLAGS) -o bin/catty-api ./cmd/catty-api
+
+# Build proxy for current platform
+build-proxy:
+	go build $(LDFLAGS) -o bin/catty-proxy ./cmd/catty-proxy
 
 # Build CLI for all platforms (for releases)
 release:
@@ -25,9 +29,13 @@ release:
 deploy-api:
 	fly deploy -c fly.api.toml
 
+# Deploy proxy to Fly
+deploy-proxy:
+	fly deploy -c fly.proxy.toml
+
 # Deploy executor to Fly
 deploy-exec:
-	fly deploy
+	fly deploy -c fly.exec.toml
 
 # Clean build artifacts
 clean:

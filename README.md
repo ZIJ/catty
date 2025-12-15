@@ -78,11 +78,12 @@ Maximum upload size: 100MB
 
 - ~~**Custom domain** - Move away from *.fly.dev URLs~~ ✓
 - ~~**Persistent storage** - PostgreSQL for sessions and users~~ ✓
+- ~~**Usage metering** - Token counting via proxy~~ ✓
 - **Session reconnect** - Reconnect to existing sessions via `catty connect <label>` (WIP - DB done, reconnect buggy)
 - **Progress indicators** - Progress bars for uploads and other long operations
 - **Workspace sync-back** - Stream file changes from remote session back to local
 - **Documentation site** - Comprehensive docs with Mintlify
-- **Usage metering & billing** - Track per-user token usage, free tier + subscription ($25/mo target)
+- **Stripe billing** - Connect usage tracking to payments, free tier + subscription ($25/mo target)
 - **Multi-key support** - Pool of API keys for handling load spikes
 
 ## Development

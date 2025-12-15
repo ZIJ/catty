@@ -129,8 +129,21 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 		"CATTY_CMD":     joinCmd(req.Cmd),
 	}
 
-	// Pass through ANTHROPIC_API_KEY if available
-	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+	// Configure Anthropic API access
+	// If proxy is configured, route API calls through it for metering
+	// Otherwise fall back to direct API key
+	if proxyHost := os.Getenv("CATTY_PROXY_HOST"); proxyHost != "" {
+		// Use proxy: encode session ID in path for tracking
+		// Proxy will extract session ID, look up user, check quota, then forward to Anthropic
+		// Note: session.ID will be set after CreateSession, so we use label as identifier
+		// The proxy will look up the session by label
+		machineEnv["ANTHROPIC_BASE_URL"] = fmt.Sprintf("https://%s/s/%s", proxyHost, label)
+		// Pass through real API key - proxy forwards it to Anthropic
+		if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+			machineEnv["ANTHROPIC_API_KEY"] = apiKey
+		}
+	} else if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		// Direct mode: pass through API key (no metering)
 		machineEnv["ANTHROPIC_API_KEY"] = apiKey
 	}
 

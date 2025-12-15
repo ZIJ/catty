@@ -33,6 +33,15 @@ The following is implemented and working:
 **In Progress:**
 - Session reconnect (`catty connect <label>`) - DB done, reconnect buggy
 
+**Token Counting/Metering: COMPLETE**
+- `catty-proxy` routes all Claude API calls through a metering proxy
+- Token counting for both streaming (SSE) and non-streaming responses
+- Per-user quota checking before forwarding requests
+- Usage records stored in PostgreSQL (`usage` table)
+
+**Next Up:**
+- Stripe integration for billing (subscriptions, payment)
+
 ---
 
 ## Quick Start
@@ -98,6 +107,22 @@ catty new --api http://127.0.0.1:4815
 │  │    (WS server)      │    │       (PTY process)         │  │
 │  └─────────────────────┘    └─────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
+       │
+       │ Claude API calls (with ANTHROPIC_BASE_URL override)
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│                   catty-proxy (proxy.catty.dev)              │
+│  - Extracts session label from URL path                      │
+│  - Looks up session, checks user quota                       │
+│  - Forwards to Anthropic API                                 │
+│  - Parses SSE responses for token usage                      │
+│  - Records usage to PostgreSQL                               │
+└──────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────────────────────┐
+│                  Anthropic API (api.anthropic.com)           │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
@@ -105,14 +130,32 @@ catty new --api http://127.0.0.1:4815
 1. User runs `catty login` (one-time) → authenticates via WorkOS → token stored locally
 2. `catty new` calls hosted API with auth token (`POST /v1/sessions`)
 3. API validates token, creates Fly Machine with connect token and command
-4. API returns connection details to CLI
-5. CLI zips current directory (respecting .gitignore) and uploads to executor via HTTP
-6. Executor extracts zip to `/workspace` directory
-7. CLI connects directly to machine via WebSocket with:
+4. API sets `ANTHROPIC_BASE_URL=https://proxy.catty.dev/s/{label}` on the machine
+5. API returns connection details to CLI
+6. CLI zips current directory (respecting .gitignore) and uploads to executor via HTTP
+7. Executor extracts zip to `/workspace` directory
+8. CLI connects directly to machine via WebSocket with:
    - `fly-force-instance-id: <machine_id>` header
    - `Authorization: Bearer <connect_token>` header
-8. Executor validates token, spawns PTY in `/workspace`, relays bytes bidirectionally
-9. CLI enters raw terminal mode, streams stdin/stdout
+9. Executor validates token, spawns PTY in `/workspace`, relays bytes bidirectionally
+10. CLI enters raw terminal mode, streams stdin/stdout
+
+### API Call Flow (Billing/Metering)
+
+When Claude Code makes an API call inside the executor:
+
+1. Claude Code sends request to `ANTHROPIC_BASE_URL` (e.g., `https://proxy.catty.dev/s/brave-tiger-1234/v1/messages`)
+2. Proxy extracts session label (`brave-tiger-1234`) from URL path
+3. Proxy looks up session in PostgreSQL by label → gets `user_id`, `session_id`
+4. Proxy checks user's quota (free tier limit)
+5. If quota OK, proxy strips `/s/{label}` prefix and forwards to `https://api.anthropic.com/v1/messages`
+6. Proxy passes through the real `x-api-key` header (Anthropic API key)
+7. Anthropic returns response (streaming SSE or JSON)
+8. Proxy intercepts response:
+   - **Non-streaming**: Parse JSON, extract `usage.input_tokens` and `usage.output_tokens`
+   - **Streaming (SSE)**: Wrap response body, parse events for `message_start` (input_tokens) and `message_delta` (output_tokens)
+9. Proxy records usage to PostgreSQL: `(user_id, session_id, input_tokens, output_tokens)`
+10. Response flows back to Claude Code
 
 ---
 
@@ -132,6 +175,8 @@ catty/
 │   │   ├── logout.go           # 'logout' command - remove credentials
 │   │   └── version.go          # 'version' command - print version
 │   ├── catty-api/              # API server binary (deployed to Fly)
+│   │   └── main.go
+│   ├── catty-proxy/            # Anthropic API proxy (metering/billing)
 │   │   └── main.go
 │   └── catty-exec-runtime/     # Executor (runs in Fly Machine)
 │       └── main.go
@@ -158,6 +203,8 @@ catty/
 │   ├── fly/                    # Fly Machines API client
 │   │   ├── client.go
 │   │   └── machines.go
+│   ├── proxy/                  # Anthropic API proxy logic
+│   │   └── proxy.go            # Reverse proxy with SSE token counting
 │   └── protocol/               # Shared types
 │       └── messages.go         # WS message types
 ├── scripts/
@@ -168,10 +215,12 @@ catty/
 │   │   ├── install.js          # Downloads platform-specific binary (postinstall)
 │   │   └── release.js          # Automated release script
 │   └── README.md
-├── Dockerfile                  # For catty-exec-runtime
+├── Dockerfile.exec             # For catty-exec-runtime (executor)
 ├── Dockerfile.api              # For catty-api
-├── fly.toml                    # Fly config for catty-exec
+├── Dockerfile.proxy            # For catty-proxy
+├── fly.exec.toml               # Fly config for catty-exec (executor)
 ├── fly.api.toml                # Fly config for catty-api
+├── fly.proxy.toml              # Fly config for catty-proxy
 ├── Makefile                    # Build and release commands
 ├── go.mod
 └── AGENTS.md                   # This file
@@ -196,10 +245,19 @@ catty/
 | `CATTY_EXEC_APP` | Fly app name for executor | `catty-exec` |
 | `CATTY_EXEC_HOST` | Hostname for executor WebSocket connections | `exec.catty.dev` |
 | `CATTY_API_ADDR` | API listen address | `0.0.0.0:8080` |
+| `CATTY_PROXY_HOST` | Hostname of the billing proxy | `proxy.catty.dev` |
 | `ANTHROPIC_API_KEY` | Passed to machines for Claude | Required (set as secret) |
 | `WORKOS_CLIENT_ID` | WorkOS application client ID | Required (set as secret) |
 | `WORKOS_API_KEY` | WorkOS API key | Required (set as secret) |
 | `DATABASE_URL` | PostgreSQL connection string | Required (set as secret) |
+
+**catty-proxy (hosted on Fly):**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ANTHROPIC_API_KEY` | Master API key for Anthropic | Required (set as secret) |
+| `DATABASE_URL` | PostgreSQL connection string | Required (set as secret) |
+| `CATTY_PROXY_ADDR` | Proxy listen address | `0.0.0.0:8081` |
+| `CATTY_DEBUG` | Set to `1` for debug logging | `0` |
 
 **catty-exec-runtime (in Fly Machine):**
 | Variable | Description |
@@ -207,6 +265,7 @@ catty/
 | `CONNECT_TOKEN` | Session capability token (set by API) |
 | `CATTY_CMD` | Command to run in PTY (set by API) |
 | `ANTHROPIC_API_KEY` | For Claude Code (set by API) |
+| `ANTHROPIC_BASE_URL` | Points to proxy with session label embedded (set by API) |
 | `CATTY_DEBUG` | Set to `1` for debug logging |
 
 ---
@@ -307,6 +366,106 @@ catty new --no-upload
 
 ---
 
+## Billing Proxy (Token Counting)
+
+The billing proxy intercepts all Anthropic API calls from Claude Code sessions to track token usage per user.
+
+### How It Works
+
+1. **URL Rewriting**: When API creates a session, it sets `ANTHROPIC_BASE_URL=https://proxy.catty.dev/s/{label}` on the executor machine
+2. **Path-Based Session ID**: The session label is encoded in the URL path, allowing the proxy to identify which session made the request without requiring additional authentication
+3. **Passthrough Authentication**: The real Anthropic API key (`x-api-key` header) is passed through to Anthropic
+4. **Response Interception**: The proxy wraps the response body to extract token usage
+
+### SSE Streaming Response Parsing
+
+Claude Code uses streaming (SSE) responses. The proxy handles this by wrapping the response body in `sseUsageReader`:
+
+```go
+// sseUsageReader wraps an SSE response body to extract usage information
+type sseUsageReader struct {
+    reader       io.ReadCloser
+    proxy        *Proxy
+    session      *db.Session
+    buffer       []byte
+    inputTokens  int64
+    outputTokens int64
+}
+```
+
+**Token extraction from SSE events:**
+- `message_start` event contains `message.usage.input_tokens`
+- `message_delta` event contains `usage.output_tokens` (final count)
+
+Example SSE events:
+```
+event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":1234}}}
+
+event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":567}}
+```
+
+Usage is recorded when:
+- The response body reaches EOF (`Read()` returns `io.EOF`)
+- The response body is closed (`Close()` is called)
+
+### Proxy Endpoints
+
+**`/s/{label}/v1/messages`** (and other Anthropic API paths)
+- Extracts session label from path
+- Looks up session in PostgreSQL
+- Checks user quota (returns 402 if exceeded)
+- Forwards to `https://api.anthropic.com/v1/messages`
+- Records usage to database
+
+**`/healthz`**
+- Returns 200 OK for health checks
+
+### Database Schema
+
+```sql
+-- Usage records for billing
+CREATE TABLE usage (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    session_id UUID NOT NULL REFERENCES sessions(id),
+    input_tokens BIGINT NOT NULL,
+    output_tokens BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_usage_user_id ON usage(user_id);
+CREATE INDEX idx_usage_session_id ON usage(session_id);
+CREATE INDEX idx_usage_created_at ON usage(created_at);
+```
+
+### Key Implementation Files
+
+- `internal/proxy/proxy.go` - Main proxy logic, SSE parsing, usage recording
+- `internal/db/postgres.go` - `RecordUsage()` and `CheckQuota()` methods
+- `cmd/catty-proxy/main.go` - HTTP server setup with chi router
+- `internal/api/handlers.go` - Sets `ANTHROPIC_BASE_URL` on executor machines
+
+### Debugging
+
+Enable debug logging:
+```bash
+fly secrets set CATTY_DEBUG=1 -a catty-proxy
+```
+
+Check proxy logs:
+```bash
+fly logs -a catty-proxy
+```
+
+Look for:
+- `"received request"` - Incoming request with label and path
+- `"proxying request"` - Request being forwarded (includes remaining quota)
+- `"recorded usage"` - Usage successfully written to database
+
+---
+
 ## Claude Code Integration
 
 ### How it Works
@@ -395,29 +554,78 @@ The full Debian image is ~1GB (vs ~200MB for Alpine), but provides a complete de
 # Create the Fly apps
 fly apps create catty-exec
 fly apps create catty-api
+fly apps create catty-proxy
 
-# Allocate shared IPv4 for executor (required for direct WS connections)
+# Allocate IPs for each app
 fly ips allocate-v4 --shared -a catty-exec
+fly ips allocate-v6 -a catty-exec
+fly ips allocate-v4 --shared -a catty-api
+fly ips allocate-v6 -a catty-api
+fly ips allocate-v4 --shared -a catty-proxy
+fly ips allocate-v6 -a catty-proxy
 
-# Set secrets for API (required for creating machines and Claude)
+# Set secrets for API
 fly secrets set FLY_API_TOKEN=... -a catty-api
-fly secrets set ANTHROPIC_API_KEY=... -a catty-api
+fly secrets set DATABASE_URL=... -a catty-api
+fly secrets set WORKOS_CLIENT_ID=... -a catty-api
+fly secrets set WORKOS_API_KEY=... -a catty-api
+fly secrets set CATTY_PROXY_HOST=proxy.catty.dev -a catty-api
 
-# Deploy both services
-make deploy-api   # or: fly deploy -c fly.api.toml
-make deploy-exec  # or: fly deploy
+# Set secrets for proxy
+fly secrets set ANTHROPIC_API_KEY=... -a catty-proxy
+fly secrets set DATABASE_URL=... -a catty-proxy
+
+# Deploy all services
+make deploy-api    # or: fly deploy -c fly.api.toml
+make deploy-exec   # or: fly deploy -c fly.exec.toml
+make deploy-proxy  # or: fly deploy -c fly.proxy.toml
 ```
+
+### Custom Domain Setup
+
+For each app, get the IPs and configure DNS:
+
+```bash
+# Get IPs for an app
+fly ips list -a <app-name>
+```
+
+Then add DNS records at your provider (e.g., Namecheap):
+
+| Type | Host | Value |
+|------|------|-------|
+| A | api | `<IPv4 address>` |
+| AAAA | api | `<IPv6 address>` |
+
+**Important:** Both A (IPv4) and AAAA (IPv6) records are required for Fly.io certificate validation.
+
+After DNS is configured, add the certificate:
+
+```bash
+fly certs add api.catty.dev -a catty-api
+fly certs add exec.catty.dev -a catty-exec
+fly certs add proxy.catty.dev -a catty-proxy
+```
+
+Current domains:
+- `api.catty.dev` → catty-api
+- `exec.catty.dev` → catty-exec
+- `proxy.catty.dev` → catty-proxy
 
 ### Updating Services
 
 ```bash
 # Update executor (catty-exec)
 make deploy-exec
-# or: fly deploy --app catty-exec
+# or: fly deploy -c fly.exec.toml
 
 # Update API (catty-api)
 make deploy-api
 # or: fly deploy -c fly.api.toml
+
+# Update proxy (catty-proxy)
+make deploy-proxy
+# or: fly deploy -c fly.proxy.toml
 ```
 
 ### Viewing Logs
@@ -650,6 +858,9 @@ fly secrets list -a catty-api
 # Should show WORKOS_CLIENT_ID and WORKOS_API_KEY
 ```
 
+### 502 errors or auth issues after API redeploy
+After redeploying `catty-api`, existing login sessions may become invalid. Run `catty logout` then `catty login` to re-authenticate. (TODO: investigate root cause - may be related to token validation or machine state)
+
 ---
 
 ## Roadmap
@@ -711,13 +922,21 @@ Setup:
 4. Deploy via Mintlify (connects to GitHub repo)
 5. Configure `docs.catty.dev` subdomain
 
-### Usage Metering & Billing
-Track per-user token usage and implement billing:
-- **Token tracking**: Intercept/proxy Anthropic API calls to count tokens per user, or use Anthropic's usage API if available
-- **Database**: PostgreSQL for users, sessions, and usage records
-- **Pricing model**: Free tier (e.g., X tokens/month) + flat subscription (~$25/mo for unlimited or higher cap)
+### Usage Metering ✓
+Token counting is complete:
+- **Proxy**: `catty-proxy` intercepts all Anthropic API calls via `ANTHROPIC_BASE_URL` override
+- **Path-based routing**: Session label encoded in URL path (`/s/{label}/v1/messages`)
+- **SSE parsing**: Handles streaming responses, extracts tokens from `message_start` and `message_delta` events
+- **Database**: Usage records stored in PostgreSQL with user_id, session_id, input_tokens, output_tokens
+- **Quota checking**: `CheckQuota()` called before each request, returns 402 if exceeded
+
+### Billing (Stripe Integration)
+Next step - connect usage tracking to payments:
+- **Stripe Checkout**: Simple subscription checkout for pro tier
+- **Pricing model**: Free tier (e.g., 100K tokens/month) + flat subscription (~$25/mo for unlimited)
+- **Webhook handling**: Listen for subscription events to update user tier
+- **User tier storage**: Add `tier` and `stripe_customer_id` fields to users table
 - **Goal**: Cheaper than running Claude Code locally with your own API key
-- **Billing integration**: Stripe for payment processing (simple checkout, no metered billing complexity initially)
 
 ### Multi-Key API Pool
 Handle load spikes by rotating through multiple Anthropic API keys:
@@ -725,6 +944,9 @@ Handle load spikes by rotating through multiple Anthropic API keys:
 - Round-robin or least-recently-used selection when spawning sessions
 - Key health tracking (rate limits, errors)
 - Admin interface to add/remove keys
+
+### Stop All Sessions Bug
+`catty stop-all-sessions-dangerously` only works on the second try. Needs investigation.
 
 ### Future Enhancements
 - Multiple concurrent sessions per user

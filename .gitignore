@@ -1,6 +1,9 @@
 # Binaries
 bin/
 dist/
+catty-api
+catty-proxy
+catty-exec-runtime
 *.exe
 *.dll
 *.so

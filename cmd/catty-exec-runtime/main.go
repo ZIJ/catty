@@ -25,6 +25,18 @@ func main() {
 		addr = ":8080"
 	}
 
+	// Log key env vars for debugging (without exposing full values)
+	if baseURL := os.Getenv("ANTHROPIC_BASE_URL"); baseURL != "" {
+		slog.Info("anthropic config", "base_url", baseURL)
+	}
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		preview := apiKey
+		if len(apiKey) > 20 {
+			preview = apiKey[:20] + "..."
+		}
+		slog.Info("anthropic config", "api_key_preview", preview, "api_key_length", len(apiKey))
+	}
+
 	server := executor.NewServer()
 
 	httpServer := &http.Server{
