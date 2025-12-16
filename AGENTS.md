@@ -9,8 +9,9 @@ When instructed to "add a task" or "add to roadmap":
 2. Add a more detailed subsection under **Roadmap** in this file (`AGENTS.md`) with implementation notes
 
 Commit messages:
-- Keep to one-liners, no extended descriptions
+- **ONE-LINERS ONLY** - no extended descriptions, no multi-line messages, no co-author footers
 - Example: `Fix upload timeout, add progress indicators to roadmap`
+- Bad: Multi-paragraph commit messages with "Generated with Claude" footers
 
 ---
 
