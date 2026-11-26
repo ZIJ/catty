@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"sync"
@@ -48,9 +49,14 @@ func (r *Relay) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// PTY -> WebSocket
+	// PTY -> WebSocket. The PTY closing is not an error: the exit case below
+	// reports it once the process is reaped.
+	ptyDone := make(chan struct{})
 	go func() {
-		errCh <- r.relayPTYToWS(ctx)
+		defer close(ptyDone)
+		if err := r.relayPTYToWS(ctx); err != nil {
+			errCh <- err
+		}
 	}()
 
 	// WebSocket -> PTY
@@ -66,7 +72,11 @@ func (r *Relay) Run(ctx context.Context) error {
 	// Wait for process exit or error
 	select {
 	case <-r.pty.ExitCh():
-		// Process exited, send exit message
+		// Process exited: flush remaining output, then send exit message
+		select {
+		case <-ptyDone:
+		case <-time.After(time.Second):
+		}
 		exitCode := r.pty.ExitCode()
 		r.sendControl(protocol.NewExitMessage(exitCode, nil))
 		return nil
@@ -89,7 +99,8 @@ func (r *Relay) relayPTYToWS(ctx context.Context) error {
 
 		n, err := r.pty.Read(buf)
 		if err != nil {
-			if err == io.EOF {
+			// Linux reports EIO once the process side of the PTY is closed
+			if err == io.EOF || errors.Is(err, syscall.EIO) {
 				return nil
 			}
 			return err
