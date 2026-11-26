@@ -1,4 +1,4 @@
-.PHONY: build build-cli build-api build-proxy release clean
+.PHONY: build build-cli build-api build-proxy release clean test
 
 VERSION ?= 0.1.0
 LDFLAGS := -ldflags="-s -w -X main.Version=$(VERSION)"
@@ -36,6 +36,11 @@ deploy-proxy:
 # Deploy executor to Fly
 deploy-exec:
 	fly deploy -c fly.exec.toml
+
+# Run vet and tests
+test:
+	go vet ./...
+	go test -race ./...
 
 # Clean build artifacts
 clean:

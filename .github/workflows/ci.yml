@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Build binaries
+        run: |
+          go build -o /dev/null ./cmd/catty
+          go build -o /dev/null ./cmd/catty-api
+          go build -o /dev/null ./cmd/catty-proxy
+          go build -o /dev/null ./cmd/catty-exec-runtime
+      - name: Cross-compile CLI
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o /dev/null ./cmd/catty
+          GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/catty

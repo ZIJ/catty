@@ -17,12 +17,12 @@ import (
 
 // BillingHandlers handles billing-related requests.
 type BillingHandlers struct {
-	db              *db.Client
-	stripeKey       string
-	webhookSecret   string
-	priceID         string
-	successURL      string
-	cancelURL       string
+	db            *db.Client
+	stripeKey     string
+	webhookSecret string
+	priceID       string
+	successURL    string
+	cancelURL     string
 }
 
 // NewBillingHandlers creates new billing handlers.
