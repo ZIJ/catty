@@ -19,24 +19,37 @@ const (
 	AnthropicAPIBase = "https://api.anthropic.com"
 )
 
+// store is the subset of db.Client the proxy needs.
+type store interface {
+	GetSessionByLabelAnyUser(label string) (*db.Session, error)
+	CheckQuota(userID string) (bool, int64, error)
+	RecordUsage(userID, sessionID string, inputTokens, outputTokens int64) error
+}
+
 // Proxy is an Anthropic API proxy that counts tokens.
 type Proxy struct {
-	db           *db.Client
+	db           store
 	anthropicKey string
+	target       *url.URL
 	reverseProxy *httputil.ReverseProxy
 	logger       *slog.Logger
 }
 
 // NewProxy creates a new Anthropic API proxy.
 func NewProxy(dbClient *db.Client, anthropicKey string, logger *slog.Logger) (*Proxy, error) {
-	target, err := url.Parse(AnthropicAPIBase)
+	return newProxy(dbClient, anthropicKey, AnthropicAPIBase, logger)
+}
+
+func newProxy(s store, anthropicKey, upstream string, logger *slog.Logger) (*Proxy, error) {
+	target, err := url.Parse(upstream)
 	if err != nil {
 		return nil, fmt.Errorf("parse anthropic URL: %w", err)
 	}
 
 	proxy := &Proxy{
-		db:           dbClient,
+		db:           s,
 		anthropicKey: anthropicKey,
+		target:       target,
 		logger:       logger,
 	}
 
@@ -51,16 +64,20 @@ func NewProxy(dbClient *db.Client, anthropicKey string, logger *slog.Logger) (*P
 
 // director modifies the outgoing request to Anthropic.
 func (p *Proxy) director(req *http.Request) {
-	target, _ := url.Parse(AnthropicAPIBase)
-	req.URL.Scheme = target.Scheme
-	req.URL.Host = target.Host
-	req.Host = target.Host
+	req.URL.Scheme = p.target.Scheme
+	req.URL.Host = p.target.Host
+	req.Host = p.target.Host
 
 	// Replace the API key with ours
 	req.Header.Set("x-api-key", p.anthropicKey)
 
 	// Remove our custom auth header
 	req.Header.Del("Authorization")
+
+	// Let the transport negotiate compression so it decompresses responses
+	// transparently; a client-supplied Accept-Encoding would hand us gzip
+	// bodies we can't parse for usage.
+	req.Header.Del("Accept-Encoding")
 }
 
 // modifyResponse processes the response from Anthropic to count tokens.
