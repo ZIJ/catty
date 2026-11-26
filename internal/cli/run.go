@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -72,11 +73,18 @@ func Run(opts *RunOptions) error {
 // buildUploadURL converts the WebSocket connect URL to an HTTP upload URL.
 func buildUploadURL(connectURL string) string {
 	// Convert wss://app.fly.dev/connect to https://app.fly.dev/upload
-	url := connectURL
-	url = strings.Replace(url, "wss://", "https://", 1)
-	url = strings.Replace(url, "ws://", "http://", 1)
-	url = strings.Replace(url, "/connect", "/upload", 1)
-	return url
+	u, err := url.Parse(connectURL)
+	if err != nil {
+		return connectURL
+	}
+	switch u.Scheme {
+	case "wss":
+		u.Scheme = "https"
+	case "ws":
+		u.Scheme = "http"
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/connect") + "/upload"
+	return u.String()
 }
 
 // connect establishes a WebSocket connection to the executor.

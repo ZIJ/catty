@@ -24,12 +24,12 @@ const (
 
 // Server is the executor HTTP/WebSocket server.
 type Server struct {
-	connectToken    string
-	cmd             []string
-	mu              sync.Mutex
-	pty             *PTY
-	workspaceReady  bool
-	workspaceDir    string
+	connectToken   string
+	cmd            []string
+	mu             sync.Mutex
+	pty            *PTY
+	workspaceReady bool
+	workspaceDir   string
 }
 
 // NewServer creates a new executor server.
