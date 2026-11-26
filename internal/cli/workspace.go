@@ -79,6 +79,18 @@ func (w *WorkspaceUploader) shouldIgnore(relPath string) bool {
 		// Handle directory patterns (ending with /)
 		pattern = strings.TrimSuffix(pattern, "/")
 
+		// Root-anchored patterns (leading /) match only from the workspace root
+		if strings.HasPrefix(pattern, "/") {
+			pattern = strings.TrimPrefix(pattern, "/")
+			parts := strings.Split(relPath, string(filepath.Separator))
+			for i := range parts {
+				if matched, _ := filepath.Match(pattern, filepath.Join(parts[:i+1]...)); matched {
+					return true
+				}
+			}
+			continue
+		}
+
 		// Check if pattern matches the base name
 		if matched, _ := filepath.Match(pattern, baseName); matched {
 			return true
@@ -136,6 +148,15 @@ func (w *WorkspaceUploader) CreateZip() ([]byte, error) {
 		// Skip the root directory itself
 		if relPath == "." {
 			return nil
+		}
+
+		// Follow symlinks to files; skip dangling links and links to directories
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Stat(path)
+			if err != nil || target.IsDir() {
+				return nil
+			}
+			info = target
 		}
 
 		// Create header
