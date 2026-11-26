@@ -1,6 +1,7 @@
 # Binaries
 bin/
 dist/
+/catty
 /catty-api
 /catty-proxy
 /catty-exec-runtime
